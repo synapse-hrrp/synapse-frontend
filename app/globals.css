@@ -1,17 +1,41 @@
+/* app/global.css */
 @import "tailwindcss";
 
+/* Couleurs de base (mode clair) */
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
 
+/* === Design tokens Tailwind v4 === */
 @theme inline {
+  /* Alias globaux */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  /* Palette Congo (raffinée) */
+  --color-congo-green:  #1B8F3A;  /* primaire brand */
+  --color-congo-greenD: #166C2F;  /* hover/headers */
+  --color-congo-greenL: #E7F6EC;  /* surfaces claires/badges */
+
+  --color-congo-yellow:  #FFD100; /* accent (CTA neutres) */
+  --color-congo-yellowD: #E6BE00; /* hover */
+
+  --color-congo-red:  #D91E18;    /* erreur/alerte */
+  --color-congo-redD: #B51E18;    /* hover */
+
+  /* Neutres (lisibilité) */
+  --color-ink-900: #0F172A; /* titres/texte principal */
+  --color-ink-700: #334155; /* texte secondaire */
+  --color-ink-500: #64748B; /* meta/labels */
+  --color-ink-100: #F8FAFC; /* fonds doux */
+
+  /* (optionnel) fontes si tu les utilises via next/font */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* Mode sombre (si l’OS utilisateur le demande) */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
@@ -19,6 +43,7 @@
   }
 }
 
+/* Style global */
 body {
   background: var(--background);
   color: var(--foreground);

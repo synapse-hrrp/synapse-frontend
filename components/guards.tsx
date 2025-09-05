@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 type ServiceId =
+  | "Patients"
   | "pharmacie"
   | "laboratoire"
   | "caisse"

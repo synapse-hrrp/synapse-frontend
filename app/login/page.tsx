@@ -6,42 +6,38 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Phone, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 
-// ⬇️ On importe les éléments communs
 import TopIdentityBar from "@/components/TopIdentityBar";
 
-type Role = "superuser" | "staff";
-type DemoUser = {
-  email: string;
-  phone?: string; // E.164 attendu: +242XXXXXXXXX
-  password: string;
-  role: Role;
-  service: string;
-};
+// ✅ On branche sur l'API (Option A)
+import { login } from "@/lib/api";
 
-const demoUsers: DemoUser[] = [
-  { email: "admin@hopital.cg",  phone: "+242060000001", password: "1234", role: "superuser", service: "*" },
-  { email: "pharma@hopital.cg", phone: "+242060000002", password: "1234", role: "staff",     service: "pharmacie" },
-  { email: "labo@hopital.cg",   phone: "+242060000003", password: "1234", role: "staff",      service: "laboratoire" },
-  { email: "caisse@hopital.cg", phone: "+242060000004", password: "1234", role: "staff",      service: "caisse" },
-];
+type Role = "superuser" | "staff";
 
 const hasWindow = () => typeof window !== "undefined";
-const sset = (k: string, v: string) => { if (hasWindow()) try { sessionStorage.setItem(k, v); } catch {} };
 
 function getParam(sp: any | null, key: string) {
-  try { const v = sp?.get?.(key); if (v != null) return v; } catch {}
-  if (hasWindow()) try { return new URLSearchParams(window.location.search).get(key) || ""; } catch {}
+  try {
+    const v = sp?.get?.(key);
+    if (v != null) return v;
+  } catch {}
+  if (hasWindow())
+    try {
+      return new URLSearchParams(window.location.search).get(key) || "";
+    } catch {}
   return "";
 }
 
-function computeRedirect(user: DemoUser, _requestedService: string, nextUrl: string) {
+function computeRedirect(user: any, _requestedService: string, nextUrl: string) {
   if (nextUrl) return nextUrl;
-  if (user.role === "superuser") return "/portail";
-  return `/${user.service}`;
+  if (user?.role === "superuser") return "/portail";
+  if (user?.service) return `/${user.service}`;
+  return "/portail";
 }
 
 /** Nettoie pour comparaison (supprime espaces, points, tirets) */
-function stripPhone(v: string) { return v.replace(/[\s.\-]/g, ""); }
+function stripPhone(v: string) {
+  return v.replace(/[\s.\-]/g, "");
+}
 
 /** Formatte visuel simple +242 XXX XXX XXX (sans impacter la valeur normalisée) */
 function prettifyPhone(v: string) {
@@ -81,9 +77,12 @@ export default function LoginPage() {
 
   const pwdRef = useRef<HTMLInputElement | null>(null);
 
-  const requestedService = useMemo(() => (getParam(sp as any, "service") || "").toLowerCase(), [sp]);
-  const nextUrl          = useMemo(() => getParam(sp as any, "next") || "", [sp]);
-  const serviceLabel     = requestedService || "(sélection automatique)";
+  const requestedService = useMemo(
+    () => (getParam(sp as any, "service") || "").toLowerCase(),
+    [sp]
+  );
+  const nextUrl = useMemo(() => getParam(sp as any, "next") || "", [sp]);
+  const serviceLabel = requestedService || "(sélection automatique)";
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if ((e as any).getModifierState && (e as any).getModifierState("CapsLock") !== undefined) {
@@ -94,8 +93,12 @@ export default function LoginPage() {
 
   function validatePhoneForUI(v: string) {
     const norm = normalizeToCongo(v);
-    if (!norm) { setPhoneError("Numéro invalide. Format attendu : +242XXXXXXXXX ou 0XXXXXXXXX."); return null; }
-    setPhoneError(null); return norm;
+    if (!norm) {
+      setPhoneError("Numéro invalide. Format attendu : +242XXXXXXXXX ou 0XXXXXXXXX.");
+      return null;
+    }
+    setPhoneError(null);
+    return norm;
   }
 
   function handlePhoneChange(v: string) {
@@ -111,49 +114,39 @@ export default function LoginPage() {
     if (display.trim()) validatePhoneForUI(display);
   }
 
-  const canSubmit = mode === "email"
-    ? !!email && !!password
-    : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
+  const canSubmit =
+    mode === "email"
+      ? !!email && !!password
+      : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
 
-  function handleLogin() {
+  // ✅ APPEL API RÉEL (Option A / Bearer token)
+  async function handleLogin() {
     setError(null);
     setLoading(true);
 
-    setTimeout(() => {
-      let user: DemoUser | undefined;
+    try {
+      let data: { token: string; user: any };
       if (mode === "email") {
-        const id = email.trim();
-        user = demoUsers.find(u => u.email === id && u.password === password);
+        data = await login({ mode: "email", email: email.trim(), password });
       } else {
         const norm = normalizeToCongo(phoneRaw || "");
-        if (!norm) { setLoading(false); setPhoneError("Numéro invalide. Exemple : +242060000001"); return; }
-        user = demoUsers.find(u => stripPhone(u.phone || "") === stripPhone(norm) && u.password === password);
+        if (!norm) {
+          setLoading(false);
+          setPhoneError("Numéro invalide. Exemple : +242060000001");
+          return;
+        }
+        data = await login({ mode: "phone", phone: norm, password });
       }
 
-      if (!user) {
-        setLoading(false);
-        setError("Identifiant ou mot de passe incorrect.");
-        setPassword("");
-        requestAnimationFrame(() => pwdRef.current?.focus());
-        return;
-      }
-
-      if (user.role === "superuser") sset("auth:token:superuser", "ok");
-      else sset(`auth:token:${user.service}`, "ok");
-
-      sset("auth:session", JSON.stringify({
-        identifier: mode === "email" ? email.trim() : normalizeToCongo(phoneRaw),
-        mode,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        service: user.service,
-      }));
-
-      const target = computeRedirect(user, requestedService, nextUrl);
+      const target = computeRedirect(data.user, requestedService, nextUrl);
       setLoading(false);
       router.replace(target);
-    }, 250);
+    } catch (e: any) {
+      setLoading(false);
+      setError(e?.message || "Identifiant ou mot de passe incorrect.");
+      setPassword("");
+      requestAnimationFrame(() => pwdRef.current?.focus());
+    }
   }
 
   function onSwitchMode(next: "email" | "phone") {
@@ -163,7 +156,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
-      {/* ⬇️ Héritage des barres/entête/footers communs */}
+      {/* Barre d’identité */}
       <TopIdentityBar />
 
       {/* Contenu spécifique Login */}
@@ -187,7 +180,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Barre tricolore (petit rappel visuel) */}
+          {/* Barre tricolore */}
           <div className="mt-3 h-1.5 w-44 rounded-full overflow-hidden ring-1 ring-black/5">
             <div className="flex h-full">
               <span className="w-1/3 bg-congo-green" />
@@ -220,7 +213,10 @@ export default function LoginPage() {
         <div className="mx-auto w-full max-w-sm">
           <form
             autoComplete="off"
-            onSubmit={(e) => { e.preventDefault(); handleLogin(); }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleLogin();
+            }}
             className="rounded-2xl bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)] ring-1 ring-black/5"
             aria-describedby={error ? "login-error" : undefined}
           >
@@ -316,7 +312,7 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* Mot de passe (bascule œil) */}
+            {/* Mot de passe */}
             <div className="flex items-center justify-between">
               <label htmlFor="password" className="mb-1 block text-xs font-medium text-ink-600">
                 Mot de passe
@@ -332,7 +328,9 @@ export default function LoginPage() {
                 ref={pwdRef}
                 type={showPwd ? "text" : "password"}
                 placeholder="Saisir votre mot de passe"
-                className={`w-full rounded-lg border border-ink-200 bg-white pl-10 pr-10 py-3 text-[15px] outline-none focus:border-congo-green focus:ring-2 ${caps ? "ring-congo-red/20" : "focus:ring-congo-green/20"}`}
+                className={`w-full rounded-lg border border-ink-200 bg-white pl-10 pr-10 py-3 text-[15px] outline-none focus:border-congo-green focus:ring-2 ${
+                  caps ? "ring-congo-red/20" : "focus:ring-congo-green/20"
+                }`}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -342,7 +340,7 @@ export default function LoginPage() {
               />
               <button
                 type="button"
-                onClick={() => setShowPwd(v => !v)}
+                onClick={() => setShowPwd((v) => !v)}
                 aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-500 hover:bg-ink-100"
               >
@@ -355,15 +353,19 @@ export default function LoginPage() {
               type="submit"
               disabled={loading || !canSubmit}
               className={`mb-3 w-full rounded-lg px-4 py-3 text-[15px] font-semibold text-white transition
-              ${loading || !canSubmit
-                ? "bg-congo-green/70 cursor-not-allowed"
-                : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"}`}
+              ${
+                loading || !canSubmit
+                  ? "bg-congo-green/70 cursor-not-allowed"
+                  : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
+              }`}
             >
               {loading ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin" /> Connexion…
                 </span>
-              ) : "Se connecter"}
+              ) : (
+                "Se connecter"
+              )}
             </button>
 
             <p className="mt-3 text-center text-xs text-ink-500">
@@ -380,7 +382,6 @@ export default function LoginPage() {
           </div>
         </div>
       </main>
-
     </div>
   );
 }

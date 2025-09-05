@@ -14,17 +14,24 @@ import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 
 export default function PortailAdmin() {
-  // Garde d'accès (client)
+  // Garde d'accès (client) — Option A: présence du token Bearer
   useEffect(() => {
     try {
-      const ok = sessionStorage.getItem("auth:token:superuser") === "ok";
-      if (!ok) window.location.replace("/login?next=/portail");
+      const token = sessionStorage.getItem("auth:token");
+      if (!token) {
+        window.location.replace("/login?next=/portail");
+        return;
+      }
+      // (Optionnel) restreindre aux superusers :
+      // const raw = sessionStorage.getItem("auth:user");
+      // const user = raw ? JSON.parse(raw) : null;
+      // if (user?.role !== "superuser") window.location.replace("/login?next=/portail");
     } catch {
       window.location.replace("/login?next=/portail");
     }
   }, []);
 
-  // Révélation au scroll
+  // Révélation au scroll (animation de ton design)
   useEffect(() => {
     const els = document.querySelectorAll<HTMLElement>("[data-reveal]");
     const io = new IntersectionObserver((entries) => {
@@ -84,17 +91,23 @@ function KpiRow() {
   return (
     <section className="grid grid-cols-1 sm:grid-cols-3 gap-4" role="region" aria-label="Indicateurs clés">
       {items.map((k, i) => (
-        <div key={k.label} data-reveal style={{ transitionDelay: `${80 * i}ms` }}
-          className="opacity-0 translate-y-2 transition-all duration-700 rounded-2xl border border-ink-100 bg-white p-4 shadow-sm">
+        <div
+          key={k.label}
+          data-reveal
+          style={{ transitionDelay: `${80 * i}ms` }}
+          className="opacity-0 translate-y-2 transition-all duration-700 rounded-2xl border border-ink-100 bg-white p-4 shadow-sm"
+        >
           <div className="flex items-center gap-3">
-            <div className={
-              "h-10 w-10 rounded-xl flex items-center justify-center " +
-              (k.tone === "green"
-                ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/20"
-                : k.tone === "yellow"
-                ? "bg-[color:var(--color-congo-yellow)]/10 text-congo-yellow ring-1 ring-congo-yellow/20"
-                : "bg-[color:var(--color-congo-red)]/10 text-congo-red ring-1 ring-congo-red/20")
-            }>
+            <div
+              className={
+                "h-10 w-10 rounded-xl flex items-center justify-center " +
+                (k.tone === "green"
+                  ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/20"
+                  : k.tone === "yellow"
+                  ? "bg-[color:var(--color-congo-yellow)]/10 text-congo-yellow ring-1 ring-congo-yellow/20"
+                  : "bg-[color:var(--color-congo-red)]/10 text-congo-red ring-1 ring-congo-red/20")
+              }
+            >
               <k.icon className="h-5 w-5" />
             </div>
             <div className="flex-1">
@@ -110,18 +123,28 @@ function KpiRow() {
 
 function QuickActions() {
   const actions = [
+    { href: "/patients",   label: "Rechercher un patient", desc: "Liste & fiches",       tone: "green" as const },
     { href: "/admissions", label: "Nouvelle admission",  desc: "Créer un dossier patient", tone: "green" as const },
     { href: "/laboratoire", label: "Demande d’analyse",   desc: "Ordre labo & suivi",       tone: "yellow" as const },
-    { href: "/caisse",      label: "Émettre un reçu",     desc: "Facturer & encaisser",    tone: "green" as const },
+    { href: "/caisse",      label: "Émettre un reçu",     desc: "Facturer & encaisser",     tone: "green" as const },
   ];
   return (
     <section aria-labelledby="actions-rapides">
       <h3 id="actions-rapides" className="text-sm font-semibold text-ink-700 mb-3">Actions rapides</h3>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {actions.map((a, i) => (
-          <Link key={a.href} href={a.href} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
-            className={"opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm hover:shadow focus:outline-none focus:ring-2 " +
-              (a.tone === "green" ? "border-congo-green/20 focus:ring-congo-green/30" : "border-congo-yellow/30 focus:ring-congo-yellow/40")}>
+          <Link
+            key={a.href}
+            href={a.href}
+            data-reveal
+            style={{ transitionDelay: `${70 * i}ms` }}
+            className={
+              "opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm hover:shadow focus:outline-none focus:ring-2 " +
+              (a.tone === "green"
+                ? "border-congo-green/20 focus:ring-congo-green/30"
+                : "border-congo-yellow/30 focus:ring-congo-yellow/40")
+            }
+          >
             <div className="text-ink-900 font-medium">{a.label}</div>
             <div className="text-xs text-ink-500">{a.desc}</div>
           </Link>
@@ -133,6 +156,7 @@ function QuickActions() {
 
 function ServicesGrid() {
   const services = [
+    { id: "patients",          label: "Patients",          desc: "Dossiers & suivi" },
     { id: "pharmacie",         label: "Pharmacie",         desc: "Dispensation & stock" },
     { id: "laboratoire",       label: "Laboratoire",       desc: "Analyses & résultats" },
     { id: "echographie",       label: "Échographie",       desc: "Imagerie ultrasonore" },
@@ -154,9 +178,14 @@ function ServicesGrid() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {services.map((s, i) => (
-          <Link key={s.id} href={`/${s.id}`} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
+          <Link
+            key={s.id}
+            href={`/${s.id}`}
+            data-reveal
+            style={{ transitionDelay: `${70 * i}ms` }}
             className="opacity-0 translate-y-2 transition-all duration-700 group relative rounded-2xl border border-ink-100 bg-white p-5 shadow-sm hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-congo-green"
-            aria-label={`Accéder au service ${s.label}`}>
+            aria-label={`Accéder au service ${s.label}`}
+          >
             <span className="absolute inset-x-0 -top-px h-1 rounded-t-2xl bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
             <div className="text-ink-900 font-semibold group-hover:text-congo-green">{s.label}</div>
             <div className="text-sm text-ink-700">{s.desc}</div>
@@ -179,9 +208,19 @@ function Announcements() {
     <section aria-labelledby="annonces" className="space-y-3">
       <h3 id="annonces" className="text-sm font-semibold text-ink-700">Annonces</h3>
       {items.map((n, i) => (
-        <div key={n.title} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
-          className={"opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm " +
-            (n.color === "yellow" ? "border-congo-yellow/30" : n.color === "red" ? "border-congo-red/30" : "border-congo-green/25")}>
+        <div
+          key={n.title}
+          data-reveal
+          style={{ transitionDelay: `${70 * i}ms` }}
+          className={
+            "opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm " +
+            (n.color === "yellow"
+              ? "border-congo-yellow/30"
+              : n.color === "red"
+              ? "border-congo-red/30"
+              : "border-congo-green/25")
+          }
+        >
           <div className="text-sm font-medium text-ink-900">{n.title}</div>
           <p className="text-xs text-ink-700 mt-1">{n.body}</p>
         </div>

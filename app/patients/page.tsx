@@ -1,32 +1,48 @@
+// app/patients/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
-import { Search, Plus, Pencil, Trash2, Eye, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from "lucide-react";
+import { Search, Plus, Pencil, Trash2, Eye, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, CheckCircle2, X } from "lucide-react";
+import { getToken, me, listPatientsPaginated, deletePatient } from "@/lib/api";
 
 type PatientRow = {
-  id: string;
+  id: string;                      // uuid
   numero_dossier: string;
   nom: string;
   prenom: string;
-  sexe: "M" | "F";
-  age?: number | null;
+  date_naissance?: string | null;
+  age_reporte?: number | null;
+  sexe?: "M" | "F" | "X" | null;
   telephone?: string | null;
-  groupe_sanguin?: string | null;
+  groupe_sanguin?: "A+"|"A-"|"B+"|"B-"|"AB+"|"AB-"|"O+"|"O-" | null;
   is_active: boolean;
-};
-
-type ApiList<T> = {
-  data: T[];
-  meta?: { current_page?: number; per_page?: number; total?: number; last_page?: number };
 };
 
 const PAGE_SIZE = 15;
 
+function ageFrom(dob?: string | null, fallback?: number | null) {
+  if (dob) {
+    const d = new Date(dob + "T00:00:00");
+    if (!isNaN(d.getTime())) {
+      const now = new Date();
+      let age = now.getFullYear() - d.getFullYear();
+      const m = now.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+      return age >= 0 ? age : "—";
+    }
+  }
+  return fallback ?? "—";
+}
+
 export default function PatientsListPage() {
+  const router = useRouter();
+  const sp = useSearchParams();
+
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<PatientRow[]>([]);
@@ -34,24 +50,41 @@ export default function PatientsListPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [toast, setToast] = useState<{ show: boolean; text: string }>(() => ({ show: false, text: "" }));
+
   const lastPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
+
+  // Garde (Option A)
+  useEffect(() => {
+    const t = getToken();
+    if (!t) { window.location.replace("/login?next=/patients"); return; }
+    me().catch(() => window.location.replace("/login?next=/patients"));
+  }, []);
+
+  // Flash message (?flash=created)
+  useEffect(() => {
+    const flash = sp?.get("flash");
+    if (flash === "created") {
+      setToast({ show: true, text: "Patient enregistré avec succès." });
+      // Nettoie l'URL sans recharger ni scroller
+      router.replace("/patients", { scroll: false });
+      // Auto-hide
+      const tid = setTimeout(() => setToast({ show: false, text: "" }), 4000);
+      return () => clearTimeout(tid);
+    }
+  }, [sp, router]);
 
   async function load() {
     setBusy(true); setErr(null);
     try {
-      const url = new URL((process.env.NEXT_PUBLIC_API_BASE || "") + "/patients");
-      url.searchParams.set("page", String(page));
-      url.searchParams.set("per_page", String(PAGE_SIZE));
-      if (q.trim()) url.searchParams.set("search", q.trim()); // ton backend peut lire ?search=
-      const r = await fetch(url.toString(), { cache: "no-store" });
-      if (!r.ok) throw new Error(await r.text());
-      const json: ApiList<PatientRow> = await r.json();
-      setRows(json.data || []);
-      setTotal(json.meta?.total ?? (json.data?.length || 0)); // fallback si pas de meta
+      const payload: any = await listPatientsPaginated({ page, per_page: PAGE_SIZE, search: q });
+      const data: PatientRow[] = Array.isArray(payload) ? payload : (payload.data ?? []);
+      const meta = payload.meta || {};
+      setRows(data);
+      setTotal(meta.total ?? data.length);
     } catch (e: any) {
       setErr(e?.message || "Erreur de chargement");
-      setRows([]);
-      setTotal(0);
+      setRows([]); setTotal(0);
     } finally {
       setBusy(false);
     }
@@ -69,9 +102,7 @@ export default function PatientsListPage() {
     if (!confirm("Supprimer ce patient ? L’opération est définitive.")) return;
     try {
       setBusy(true);
-      const r = await fetch((process.env.NEXT_PUBLIC_API_BASE || "") + `/patients/${id}`, { method: "DELETE" });
-      if (!r.ok) throw new Error(await r.text());
-      // Recharger la page actuelle (si elle devient vide, revenir à la précédente)
+      await deletePatient(id);
       if (rows.length === 1 && page > 1) setPage(p => p - 1);
       else load();
     } catch (e: any) {
@@ -109,7 +140,7 @@ export default function PatientsListPage() {
           </Link>
         </div>
 
-        {/* Barre de recherche / filtres */}
+        {/* Barre de recherche */}
         <form onSubmit={resetAndSearch} className="rounded-xl border border-ink-100 bg-white p-3 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="relative flex-1">
@@ -152,30 +183,33 @@ export default function PatientsListPage() {
                 <tr><td colSpan={8} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>
               )}
 
-              {rows.map((p) => (
-                <tr key={p.id} className="border-t border-ink-100 hover:bg-ink-50/40">
-                  <Td className="font-mono">{p.numero_dossier}</Td>
-                  <Td className="font-medium">{p.nom} {p.prenom}</Td>
-                  <Td>{p.sexe}</Td>
-                  <Td>{p.age ?? "—"}</Td>
-                  <Td>{p.telephone || "—"}</Td>
-                  <Td>{p.groupe_sanguin || "—"}</Td>
-                  <Td>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${p.is_active ? "bg-congo-greenL text-congo-green" : "bg-ink-200 text-ink-700"}`}>
-                      {p.is_active ? "Actif" : "Inactif"}
-                    </span>
-                  </Td>
-                  <Td className="text-right pr-3">
-                    <div className="inline-flex items-center gap-1">
-                      <Link href={`/patients/${p.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
-                      <Link href={`/patients/${p.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
-                      <button onClick={() => onDelete(p.id)} className="icon-btn text-congo-red" aria-label="Supprimer">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
+              {rows.map((p) => {
+                const fullName = `${p.nom ?? ""} ${p.prenom ?? ""}`.trim() || "(sans nom)";
+                return (
+                  <tr key={p.id} className="border-t border-ink-100 hover:bg-ink-50/40">
+                    <Td className="font-mono">{p.numero_dossier}</Td>
+                    <Td className="font-medium">{fullName}</Td>
+                    <Td>{p.sexe ?? "—"}</Td>
+                    <Td>{ageFrom(p.date_naissance, p.age_reporte)}</Td>
+                    <Td>{p.telephone || "—"}</Td>
+                    <Td>{p.groupe_sanguin || "—"}</Td>
+                    <Td>
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${p.is_active ? "bg-congo-greenL text-congo-green" : "bg-ink-200 text-ink-700"}`}>
+                        {p.is_active ? "Actif" : "Inactif"}
+                      </span>
+                    </Td>
+                    <Td className="text-right pr-3">
+                      <div className="inline-flex items-center gap-1">
+                        <Link href={`/patients/${p.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
+                        <Link href={`/patients/${p.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
+                        <button onClick={() => onDelete(p.id)} className="icon-btn text-congo-red" aria-label="Supprimer">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -196,12 +230,15 @@ export default function PatientsListPage() {
 
       <SiteFooter />
 
+      {/* Toast succès */}
+      <Toast show={toast.show} onClose={() => setToast({ show: false, text: "" })}>
+        <CheckCircle2 className="h-5 w-5" />
+        <span className="font-medium">Patient enregistré avec succès.</span>
+      </Toast>
+
       <style jsx global>{`
-        .icon-btn {
-          display:inline-flex; align-items:center; justify-content:center;
-          padding:6px; border-radius:8px; color:#111827;
-        }
-        .icon-btn:hover { background: #f3f4f6; }
+        .icon-btn { display:inline-flex; align-items:center; justify-content:center; padding:6px; border-radius:8px; color:#111827; }
+        .icon-btn:hover { background:#f3f4f6; }
       `}</style>
     </div>
   );
@@ -218,9 +255,33 @@ function PageBtn({ children, disabled, onClick }: any) {
     <button
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-lg border border-ink-100 bg-white px-2.5 py-1.5 hover:bg-ink-50 disabled:opacity-40`}
+      className="rounded-lg border border-ink-100 bg-white px-2.5 py-1.5 hover:bg-ink-50 disabled:opacity-40"
     >
       {children}
     </button>
+  );
+}
+
+/* --------- Petit composant Toast moderne --------- */
+function Toast({ show, onClose, children }: { show: boolean; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      aria-live="polite"
+      role="status"
+      className={`fixed bottom-4 right-4 z-50 transition-all duration-300 ${
+        show ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-2"
+      }`}
+    >
+      <div className="flex items-center gap-2 rounded-xl border border-congo-green/30 bg-congo-greenL px-3 py-2 shadow-lg ring-1 ring-congo-green/20 text-congo-green">
+        {children}
+        <button
+          onClick={onClose}
+          aria-label="Fermer la notification"
+          className="ml-1 rounded-md p-1 hover:bg-ink-100 text-ink-600"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   );
 }

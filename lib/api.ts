@@ -5,8 +5,25 @@ export type LoginPayload =
   | { mode: "email"; email: string; password: string }
   | { mode: "phone"; phone: string; password: string };
 
+export function getToken() {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem("auth:token");
+}
+
+export function setSession(token: string, user: any) {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem("auth:token", token);
+  sessionStorage.setItem("auth:user", JSON.stringify(user || null));
+}
+
+export function clearSession() {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem("auth:token");
+  sessionStorage.removeItem("auth:user");
+}
+
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const token = typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
+  const token = (typeof window !== "undefined") ? sessionStorage.getItem("auth:token") : null;
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -15,16 +32,19 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
+    cache: "no-store",
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+    throw new Error(`${res.status} ${res.statusText} - ${text}`);
   }
 
   const ct = res.headers.get("content-type") || "";
   return ct.includes("application/json") ? res.json() : (await res.text());
 }
+
+/* ------------ Auth ------------ */
 
 export async function login(payload: LoginPayload) {
   const body =
@@ -32,33 +52,46 @@ export async function login(payload: LoginPayload) {
       ? { email: payload.email, password: payload.password }
       : { phone: payload.phone, password: payload.password };
 
-  const data = await apiFetch("/auth/login", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  const data = await apiFetch("/auth/login", { method: "POST", body: JSON.stringify(body) });
 
-  // backend attendu: { token, user }
-  if (!data?.token) throw new Error("Token manquant dans la réponse /auth/login");
+  const token = data?.token || data?.access_token || data?.data?.token;
+  const user  = data?.user  || data?.data?.user;
+  if (!token) throw new Error("Token manquant dans la réponse /auth/login");
 
-  sessionStorage.setItem("auth:token", data.token);
-  sessionStorage.setItem("auth:user", JSON.stringify(data.user || null));
-
-  return data as { token: string; user: any };
+  setSession(token, user || null);
+  return { token, user };
 }
 
-export function getSession() {
-  if (typeof window === "undefined") return null;
-  const token = sessionStorage.getItem("auth:token");
-  const user = sessionStorage.getItem("auth:user");
-  return token ? { token, user: user ? JSON.parse(user) : null } : null;
+export async function me() {
+  return apiFetch("/auth/me", { method: "GET" });
 }
-
-export const me = () => apiFetch("/auth/me", { method: "GET" });
 
 export async function logout() {
-  try {
-    await apiFetch("/auth/logout", { method: "POST" });
-  } catch {}
-  sessionStorage.removeItem("auth:token");
-  sessionStorage.removeItem("auth:user");
+  try { await apiFetch("/auth/logout", { method: "POST" }); } catch {}
+  clearSession();
+}
+
+/* ------------ Patients ------------ */
+
+export async function listPatientsPaginated(params: { page?: number; per_page?: number; search?: string } = {}) {
+  const { page = 1, per_page = 15, search = "" } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (search.trim()) qp.set("search", search.trim());
+  return apiFetch(`/patients?${qp.toString()}`, { method: "GET" });
+}
+
+export async function createPatient(payload: any) {
+  return apiFetch("/patients", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function deletePatient(id: string) {
+  return apiFetch(`/patients/${id}`, { method: "DELETE" });
+}
+
+export async function getPatient(id: string) {
+  return apiFetch(`/patients/${id}`, { method: "GET" });
+}
+
+export async function updatePatient(id: string, payload: any) {
+  return apiFetch(`/patients/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }

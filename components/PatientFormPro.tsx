@@ -1,15 +1,18 @@
+// components/PatientFormPro.tsx
 "use client";
 
 import { useMemo, useState } from "react";
 import { Check, ChevronRight, User, Phone, Calendar, Shield, Syringe, Heart, MapPin } from "lucide-react";
+import { createPatient } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
 type Payload = {
   nom: string;
   prenom: string;
-  date_naissance: string;
+  date_naissance: string;                 // "YYYY-MM-DD" ou ""
   lieu_naissance: string;
-  age_reporte?: string;
-  sexe: "M" | "F";
+  age_reporte?: string;                   // saisie libre, on convertit en number
+  sexe: "M" | "F";                        // (ajoute "X" si votre back l’utilise)
   nationalite: string;
   profession: string;
   adresse: string;
@@ -44,7 +47,18 @@ function computeAge(dateISO?: string) {
   return age >= 0 ? String(age) : "";
 }
 
+function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
+  const out: any = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === "" || v === undefined) out[k] = null;
+    else out[k] = v;
+  }
+  return out;
+}
+
 export default function PatientFormPro() {
+  const router = useRouter();
+
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<Payload>({
@@ -88,19 +102,34 @@ export default function PatientFormPro() {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = {
-        ...data,
-        age_reporte: data.date_naissance ? undefined : (data.age_reporte ? Number(data.age_reporte) : undefined),
+      // Payload aligné migration (null si vide, number pour age_reporte)
+      const payloadRaw = {
+        nom: data.nom.trim(),
+        prenom: data.prenom.trim(),
+        date_naissance: data.date_naissance || null,
+        lieu_naissance: data.lieu_naissance || null,
+        age_reporte: data.date_naissance ? null : (data.age_reporte ? Number(data.age_reporte) : null),
+        sexe: data.sexe as "M" | "F", // ajoute "X" si besoin
+        nationalite: data.nationalite || null,
+        profession: data.profession || null,
+        adresse: data.adresse || null,
+        quartier: data.quartier || null,
+        telephone: data.telephone || null,
+        statut_matrimonial: data.statut_matrimonial || null,
+        proche_nom: data.proche_nom || null,
+        proche_tel: data.proche_tel || null,
+        groupe_sanguin: data.groupe_sanguin || null,
+        allergies: data.allergies || null,
+        assurance_id: data.assurance_id || null,
+        numero_assure: data.numero_assure || null,
+        is_active: !!data.is_active,
       };
+      const payload = nullifyEmpty(payloadRaw);
 
-      const res = await fetch(process.env.NEXT_PUBLIC_API_BASE + "/patients", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      alert("Patient enregistré avec succès.");
-      // TODO : redirection si besoin
+      await createPatient(payload);
+
+      // ✅ Redirection vers la liste + “flash message”
+      router.replace("/patients?flash=created");
     } catch (err: any) {
       alert("Erreur: " + (err?.message || "inconnue"));
     } finally {
@@ -113,15 +142,11 @@ export default function PatientFormPro() {
       {/* Colonne gauche : étapes & progression */}
       <aside className="lg:col-span-1">
         <div className="rounded-2xl border border-ink-100 bg-white shadow-sm overflow-hidden sticky top-20">
-          {/* Liseré Congo */}
           <div className="h-1 bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
           <div className="p-4">
             <div className="mb-3 text-sm font-semibold">Progression</div>
             <div className="h-2 w-full rounded-full bg-ink-100 overflow-hidden">
-              <div
-                className="h-full bg-congo-green transition-all"
-                style={{ width: `${progress}%` }}
-              />
+              <div className="h-full bg-congo-green transition-all" style={{ width: `${progress}%` }} />
             </div>
 
             <ul className="mt-4 space-y-1">
@@ -181,6 +206,7 @@ export default function PatientFormPro() {
                 <select className={inputCls} value={data.sexe} onChange={e=>upd("sexe", e.target.value as "M"|"F")}>
                   <option value="M">Masculin</option>
                   <option value="F">Féminin</option>
+                  {/* <option value="X">Non spécifié</option> */}
                 </select>
               </Field>
             </div>
@@ -262,7 +288,7 @@ export default function PatientFormPro() {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
               <Field label="Assurance (ID)">
-                <input className={inputCls} value={data.assurance_id} onChange={e=>upd("assurance_id", e.target.value)} placeholder="Code assurance" />
+                <input className={inputCls} value={data.assurance_id} onChange={e=>upd("assurance_id", e.target.value)} placeholder="UUID assurance (optionnel)" />
               </Field>
               <Field label="Numéro d’assuré">
                 <input className={inputCls} value={data.numero_assure} onChange={e=>upd("numero_assure", e.target.value)} placeholder="N° de police" />
@@ -295,7 +321,7 @@ export default function PatientFormPro() {
                 <li><b>Groupe sanguin:</b> {data.groupe_sanguin || "—"}</li>
               </ul>
               <p className="mt-2 text-ink-600 text-xs">
-                Le <b>numéro de dossier</b> sera généré automatiquement côté serveur (format <code>HSP-YYYY-XXXXXX</code>).
+                Le <b>numéro de dossier</b> sera généré automatiquement côté serveur.
               </p>
             </div>
           </Card>

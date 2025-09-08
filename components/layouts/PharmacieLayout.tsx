@@ -26,7 +26,7 @@ export default function PharmacieLayout({ children }: Props) {
       </div>
 
       {/* Overlay (sans blur !) pour lisibilité */}
-      <div className="absolute inset-0 bg-white/55 -z-0" />
+      <div className="absolute inset-0 bg-white/5 -z-0" />
 
       {/* Contenu */}
       <div className="relative z-10 flex flex-col min-h-screen">
@@ -34,7 +34,7 @@ export default function PharmacieLayout({ children }: Props) {
         <SiteHeader
           title="Pharmacie"
           subtitle="Sélectionnez une famille de médicaments"
-          logoSrc="/logos/pharmacie.png"
+          logoSrc="/images/pharmacie/backgrounds/phr.jpg"
           avatarSrc="/Gloire.png"
         />
 

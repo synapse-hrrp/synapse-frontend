@@ -1,11 +1,24 @@
+// app/patients/new/page.tsx
 "use client";
 
+import { useEffect } from "react";
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import PatientFormPro from "@/components/PatientFormPro";
+import { getToken, me } from "@/lib/api";
 
 export default function NewPatientPage() {
+  // Garde (Option A)
+  useEffect(() => {
+    const t = getToken();
+    if (!t) {
+      window.location.replace("/login?next=/patients/new");
+      return;
+    }
+    me().catch(() => window.location.replace("/login?next=/patients/new"));
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
       <TopIdentityBar />

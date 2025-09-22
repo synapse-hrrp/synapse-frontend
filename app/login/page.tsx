@@ -7,11 +7,111 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Phone, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 
 import TopIdentityBar from "@/components/TopIdentityBar";
-
-// ✅ On branche sur l'API (Option A)
 import { login } from "@/lib/api";
 
-type Role = "superuser" | "staff";
+/* ---------------- Helpers redirection ---------------- */
+
+type AnyObj = Record<string, any>;
+
+const SERVICE_NAME_TO_SLUG: Record<string, string> = {
+  "Accueil / Réception": "accueil",
+  "Consultations": "consultations",
+  "Médecine Générale": "medecine",
+  "Accueil & Urgences (ARU)": "aru",
+  "Laboratoire": "laboratoire",
+  "Pharmacie": "pharmacie",
+  "Caisse / Finance": "finance",
+  "Logistique": "logistique",
+  "Pansement": "pansement",
+  "Kinésithérapie": "kinesitherapie",
+  "Gestion des Malades (Hospitalisation)": "gestion-malade",
+  "Programme Sanitaire (Tuberculose/VIH)": "sanitaire",
+  "Gynécologie": "gynecologie",
+  "Maternité": "maternite",
+  "Pédiatrie": "pediatrie",
+  "SMI (Santé Maternelle & Infantile)": "smi",
+  "Bloc Opératoire": "bloc-operatoire",
+  "Statistiques / Dashboard": "statistiques",
+  "Répartition des Pourcentages": "pourcentage",
+  "Gestion du Personnel": "personnel",
+};
+
+// pour deviner un service si on ne reçoit pas la relation service
+const ROLE_TO_SLUG: Record<string, string> = {
+  reception: "accueil",
+  medecin: "consultations",
+  infirmier: "pansement",
+  laborantin: "laboratoire",
+  pharmacien: "pharmacie",
+  caissier: "finance",
+  gestionnaire: "statistiques",
+};
+
+function getRoleNames(user: AnyObj): string[] {
+  const raw = user?.roles ?? [];
+  return raw
+    .map((r: any) => (typeof r === "string" ? r : r?.name))
+    .filter(Boolean);
+}
+function getPermNames(user: AnyObj): Set<string> {
+  const pools = [user?.permissions, user?.perms, user?.abilities, user?.scopes].filter(Boolean);
+  const names = pools.flatMap((arr: any[]) =>
+    (Array.isArray(arr) ? arr : []).map((p: any) => (typeof p === "string" ? p : p?.name)).filter(Boolean)
+  );
+  return new Set(names);
+}
+
+function serviceSlugToPath(slug?: string | null): string | null {
+  if (!slug) return null;
+  // exceptions d’URL côté front
+  if (slug === "finance") return "/caisse";
+  if (slug === "personnel") return "/personnels";
+  return `/${slug}`;
+}
+
+function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string): string {
+  // 1) priorité à ?next= si présent
+  if (nextUrl) return nextUrl;
+
+  const roles = getRoleNames(user).map((r) => String(r).toLowerCase());
+  const isAdmin = roles.includes("admin") || roles.includes("dg");
+  if (isAdmin) return "/portail";
+
+  // 2) service directement depuis la relation personnelle -> service
+  let slug =
+    user?.personnel?.service?.slug ||
+    SERVICE_NAME_TO_SLUG[user?.personnel?.service?.name as string];
+
+  // 3) si l’URL a demandé un service (ex: ?service=laboratoire) et qu’on n’a rien trouvé
+  if (!slug && requestedService && typeof requestedService === "string") {
+    slug = requestedService;
+  }
+
+  // 4) sinon, deviner via le rôle (ex: caissier → finance)
+  if (!slug) {
+    for (const r of roles) {
+      if (ROLE_TO_SLUG[r]) {
+        slug = ROLE_TO_SLUG[r];
+        break;
+      }
+    }
+  }
+
+  // 5) sinon, deviner via permissions
+  if (!slug) {
+    const perms = getPermNames(user);
+    if (perms.has("labo.view") || perms.has("labo.request.create")) slug = "laboratoire";
+    else if (perms.has("pharma.stock.view") || perms.has("pharma.sale.create")) slug = "pharmacie";
+    else if (perms.has("finance.invoice.view") || perms.has("finance.payment.create")) slug = "finance";
+    else if (perms.has("pansement.view")) slug = "pansement";
+    else if (perms.has("patients.read") || perms.has("visites.read")) slug = "accueil";
+  }
+
+  // 6) fallback final
+  return serviceSlugToPath(slug) || "/portail";
+}
+
+/* ---------------- Helpers UI/phone ---------------- */
 
 const hasWindow = () => typeof window !== "undefined";
 
@@ -25,13 +125,6 @@ function getParam(sp: any | null, key: string) {
       return new URLSearchParams(window.location.search).get(key) || "";
     } catch {}
   return "";
-}
-
-function computeRedirect(user: any, _requestedService: string, nextUrl: string) {
-  if (nextUrl) return nextUrl;
-  if (user?.role === "superuser") return "/portail";
-  if (user?.service) return `/${user.service}`;
-  return "/portail";
 }
 
 /** Nettoie pour comparaison (supprime espaces, points, tirets) */
@@ -61,6 +154,8 @@ function normalizeToCongo(v: string) {
   return null;
 }
 
+/* ---------------- Page ---------------- */
+
 export default function LoginPage() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -85,6 +180,7 @@ export default function LoginPage() {
   const serviceLabel = requestedService || "(sélection automatique)";
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // CapsLock
     if ((e as any).getModifierState && (e as any).getModifierState("CapsLock") !== undefined) {
       setCaps((e as any).getModifierState("CapsLock"));
     }
@@ -119,7 +215,6 @@ export default function LoginPage() {
       ? !!email && !!password
       : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
 
-  // ✅ APPEL API RÉEL (Option A / Bearer token)
   async function handleLogin() {
     setError(null);
     setLoading(true);
@@ -138,6 +233,7 @@ export default function LoginPage() {
         data = await login({ mode: "phone", phone: norm, password });
       }
 
+      // computeRedirect gère admin → /portail, sinon → /<service>
       const target = computeRedirect(data.user, requestedService, nextUrl);
       setLoading(false);
       router.replace(target);
@@ -156,10 +252,8 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
-      {/* Barre d’identité */}
       <TopIdentityBar />
 
-      {/* Contenu spécifique Login */}
       <main className="relative mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 py-14 md:grid-cols-2 md:items-center">
         {/* Colonne gauche : logo + message */}
         <div className="flex flex-col items-start">
@@ -180,7 +274,6 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Barre tricolore */}
           <div className="mt-3 h-1.5 w-44 rounded-full overflow-hidden ring-1 ring-black/5">
             <div className="flex h-full">
               <span className="w-1/3 bg-congo-green" />
@@ -196,14 +289,13 @@ export default function LoginPage() {
               Service demandé :
               <b className="ml-1 inline-flex items-center gap-2 rounded-full border border-congo-green/25 bg-congo-greenL px-2.5 py-0.5 text-congo-green">
                 <span className="inline-block h-2 w-2 rounded-full bg-congo-green" />
-                {serviceLabel}
+                {requestedService || "(sélection automatique)"}
               </b>
             </span>
           </p>
 
-          {/* Points clés */}
           <ul className="mt-6 grid grid-cols-1 gap-2 text-sm text-ink-700">
-            <li className="rounded-xl border border-congo-green/30 bg-congo-greenL px-3 py-2">🔐 Accès par rôle — superuser & personnel</li>
+            <li className="rounded-xl border border-congo-green/30 bg-congo-greenL px-3 py-2">🔐 Accès par rôle — admin & personnel</li>
             <li className="rounded-xl border border-congo-yellow/40 bg-[color:var(--color-congo-yellow)]/15 px-3 py-2">🧭 Redirection automatique vers le bon service</li>
             <li className="rounded-xl border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 px-3 py-2">⏳ Session limitée à l’onglet (aucune donnée persistée)</li>
           </ul>
@@ -213,14 +305,10 @@ export default function LoginPage() {
         <div className="mx-auto w-full max-w-sm">
           <form
             autoComplete="off"
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleLogin();
-            }}
+            onSubmit={(e) => { e.preventDefault(); handleLogin(); }}
             className="rounded-2xl bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)] ring-1 ring-black/5"
             aria-describedby={error ? "login-error" : undefined}
           >
-            {/* Liseré haut tricolore */}
             <div className="-mx-5 -mt-5 mb-4 h-1.5 rounded-t-2xl overflow-hidden">
               <div className="flex h-full">
                 <span className="w-1/3 bg-congo-green" />
@@ -230,11 +318,7 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div
-                id="login-error"
-                role="alert"
-                className="mb-3 rounded-lg border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 p-2.5 text-sm text-congo-red"
-              >
+              <div id="login-error" role="alert" className="mb-3 rounded-lg border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 p-2.5 text-sm text-congo-red">
                 {error}
               </div>
             )}
@@ -263,12 +347,10 @@ export default function LoginPage() {
               </button>
             </div>
 
-            {/* Identifiant selon le mode */}
+            {/* Identifiant */}
             {mode === "email" ? (
               <>
-                <label htmlFor="email" className="mb-1 block text-xs font-medium text-ink-600">
-                  Adresse e-mail
-                </label>
+                <label htmlFor="email" className="mb-1 block text-xs font-medium text-ink-600">Adresse e-mail</label>
                 <div className="relative mb-3">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-congo-green/80" />
                   <input
@@ -288,9 +370,7 @@ export default function LoginPage() {
               </>
             ) : (
               <>
-                <label htmlFor="phone" className="mb-1 block text-xs font-medium text-ink-600">
-                  Numéro de téléphone (Congo)
-                </label>
+                <label htmlFor="phone" className="mb-1 block text-xs font-medium text-ink-600">Numéro de téléphone (Congo)</label>
                 <div className="relative mb-1">
                   <Phone className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-congo-green/80" />
                   <input
@@ -314,9 +394,7 @@ export default function LoginPage() {
 
             {/* Mot de passe */}
             <div className="flex items-center justify-between">
-              <label htmlFor="password" className="mb-1 block text-xs font-medium text-ink-600">
-                Mot de passe
-              </label>
+              <label htmlFor="password" className="mb-1 block text-xs font-medium text-ink-600">Mot de passe</label>
               <span role="status" aria-live="polite" className={`text-xs ${caps ? "text-congo-red" : "text-transparent"} transition`}>
                 {caps ? "CapsLock activé" : "—"}
               </span>
@@ -348,16 +426,12 @@ export default function LoginPage() {
               </button>
             </div>
 
-            {/* CTA principal */}
+            {/* CTA */}
             <button
               type="submit"
               disabled={loading || !canSubmit}
               className={`mb-3 w-full rounded-lg px-4 py-3 text-[15px] font-semibold text-white transition
-              ${
-                loading || !canSubmit
-                  ? "bg-congo-green/70 cursor-not-allowed"
-                  : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
-              }`}
+              ${loading || !canSubmit ? "bg-congo-green/70 cursor-not-allowed" : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"}`}
             >
               {loading ? (
                 <span className="inline-flex items-center gap-2">
@@ -373,7 +447,6 @@ export default function LoginPage() {
             </p>
           </form>
 
-          {/* Encart institutionnel */}
           <div className="mt-6 text-center text-[13px] text-ink-600">
             <span className="font-semibold text-congo-green">
               Hôpital de Référence Raymond Pouaty | Brazzaville

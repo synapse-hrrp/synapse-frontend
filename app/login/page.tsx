@@ -166,7 +166,7 @@ export default function LoginPage() {
           <div className="flex items-center gap-3">
             <div className="relative h-24 w-24 overflow-hidden rounded-2xl bg-white ring-2 ring-congo-green shadow-sm">
               <Image
-                src="/logo-hospital.png"
+                src="/logo-hospitals.png"
                 alt="Logo Hôpital"
                 fill
                 className="object-contain p-2"
@@ -175,7 +175,13 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold text-ink-900">HRRP</h1>
+<h1 className="text-2xl font-semibold">
+  <span className="text-green-600">H</span>
+  <span className="text-yellow-500">R</span>
+  <span className="text-yellow-500">R</span>
+  <span className="text-red-600">P</span>
+</h1>
+
               <p className="text-xs text-ink-600">Portail hospitalier sécurisé</p>
             </div>
           </div>
@@ -190,7 +196,7 @@ export default function LoginPage() {
           </div>
 
           <p className="mt-4 max-w-md text-[17px] text-ink-700">
-            Connectez-vous au <b>portail hospitalier officiel de l’Hôpital de Référence Raymond Pouaty</b>.
+            Connectez-vous au <b>portail hospitalier officiel de l’Hôpital de Référence Raymond Pouaty | Ex Hôpital des Lépreux</b>.
             <br className="hidden sm:block" />
             <span className="text-ink-600 text-[15px]">
               Service demandé :

@@ -1,105 +1,35 @@
-// components/guards.tsx
+// components/Guard.tsx
 "use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { getToken, isAdmin, hasRole, can, canAny } from "@/lib/authz";
 
-import { useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
-
-type ServiceId =
-  | "Patients"
-  | "pharmacie"
-  | "laboratoire"
-  | "caisse"
-  | "echographie"
-  | "gynecologie"
-  | "pediatrie"
-  | "medecine-generale"
-  | "admissions"
-  | "consultations";
-
-function hasWindow() {
-  return typeof window !== "undefined";
-}
-function sget(key: string) {
-  if (!hasWindow()) return null;
-  try { return sessionStorage.getItem(key); } catch { return null; }
-}
-
-function LoadingScreen({ label }: { label: string }) {
-  return (
-    <div className="min-h-[50vh] grid place-items-center text-slate-600">
-      <div className="animate-pulse">{label}…</div>
-    </div>
-  );
-}
-
-/** Garde pour un service donné (staff ou superuser) */
-export function ServiceGuard({
-  service,
-  children,
-}: {
-  service: ServiceId;
+type Props = {
+  requireRole?: "admin" | "staff";
+  requireAbility?: string;
+  requireAny?: string[]; // ex: ["visites.read","visites.write"]
   children: React.ReactNode;
-}) {
+  redirectTo?: string;   // défaut: /login?next=...
+};
+
+export default function Guard({ requireRole, requireAbility, requireAny, redirectTo, children }: Props) {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [ready, setReady] = useState(false);
-  const [allowed, setAllowed] = useState(false);
-
-  // On lit la session une seule fois au montage
-  useEffect(() => {
-    let ok = false;
-
-    // superuser a tous les droits
-    if (sget("auth:token:superuser") === "ok") {
-      ok = true;
-    }
-
-    // jeton spécifique au service pour le staff
-    if (!ok && sget(`auth:token:${service}`) === "ok") {
-      ok = true;
-    }
-
-    setAllowed(ok);
-    setReady(true);
-
-    // si non autorisé → redirige vers /login avec next+service (une seule fois)
-    if (!ok) {
-      const next = encodeURIComponent(pathname || `/${service}`);
-      router.replace(`/login?next=${next}&service=${encodeURIComponent(service)}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service]); // ← dépend seulement du service
-
-  if (!ready) return <LoadingScreen label="Vérification des autorisations" />;
-
-  // Si pas autorisé, on rend un écran neutre (la redirection est en cours)
-  if (!allowed) return <LoadingScreen label="Redirection vers la connexion" />;
-
-  return <>{children}</>;
-}
-
-/** Garde portail superuser uniquement */
-export function SuperuserGuard({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const pathname = usePathname();
-
-  const [ready, setReady] = useState(false);
-  const [isSuper, setIsSuper] = useState(false);
+  const [ok, setOk] = useState(false);
 
   useEffect(() => {
-    const ok = sget("auth:token:superuser") === "ok";
-    setIsSuper(ok);
-    setReady(true);
-    if (!ok) {
-      const next = encodeURIComponent(pathname || "/portail");
-      router.replace(`/login?next=${next}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const t = getToken();
+    if (!t) { router.replace(redirectTo || `/login?next=${encodeURIComponent(location.pathname)}`); return; }
 
-  if (!ready) return <LoadingScreen label="Vérification du profil superuser" />;
-  if (!isSuper) return <LoadingScreen label="Redirection vers la connexion" />;
+    // super admin passe partout
+    if (isAdmin()) { setOk(true); return; }
 
+    if (requireRole && !hasRole(requireRole)) { router.replace("/403"); return; }
+    if (requireAbility && !can(requireAbility)) { router.replace("/403"); return; }
+    if (requireAny && !canAny(requireAny)) { router.replace("/403"); return; }
+
+    setOk(true);
+  }, [router, requireRole, requireAbility, requireAny, redirectTo]);
+
+  if (!ok) return null; // ou un loader
   return <>{children}</>;
 }

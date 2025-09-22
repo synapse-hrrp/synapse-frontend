@@ -1,18 +1,33 @@
 // components/PersonnelFormPro.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createPersonnel, getToken, me } from "@/lib/api";
-import { Check, ChevronRight, User, Phone, Calendar, Building2, Briefcase, MapPin } from "lucide-react";
-import { useEffect } from "react";
+import {
+  createPersonnel,
+  getToken,
+  me,
+  listAllServices,
+  listUsersPaginated,
+} from "@/lib/api";
+import {
+  Check,
+  ChevronRight,
+  User as UserIcon,
+  Phone,
+  Building2,
+  Briefcase,
+  MapPin,
+} from "lucide-react";
+
+/* ---------------- Types & helpers ---------------- */
 
 type Payload = {
   user_id: string;           // requis (lié à users.id)
   matricule: string;         // requis
   first_name: string;
   last_name: string;
-  sex: "M"|"F";
+  sex: "M" | "F";
   date_of_birth: string;     // YYYY-MM-DD | ""
   cin: string;
   phone_alt: string;
@@ -26,12 +41,42 @@ type Payload = {
   extra: string;             // JSON facultatif (stringifié)
 };
 
+type ServiceDTO = { id: number; slug: string; name: string };
+type UserMini = { id: number; name: string; email?: string | null };
+
 const steps = [
-  { key: "identite", label: "Identité", icon: User },
+  { key: "identite", label: "Identité", icon: UserIcon },
   { key: "coordonnees", label: "Coordonnées", icon: MapPin },
   { key: "emploi", label: "Emploi & Service", icon: Briefcase },
   { key: "fichiers", label: "Avatar & Extra", icon: Building2 },
 ] as const;
+
+// Mapping service.slug -> rôle par défaut (doit exister dans le seeder des rôles)
+const DEFAULT_ROLE_BY_SERVICE: Record<string, string> = {
+  accueil: "reception",
+  consultations: "medecin",
+  medecine: "medecin",
+  aru: "infirmier",
+  laboratoire: "laborantin",
+  pharmacie: "pharmacien",
+  finance: "caissier",
+  pansement: "infirmier",
+  "gestion-malade": "gestionnaire",
+  // autres services : pas d’auto-rôle
+};
+
+function toNumberOrNull(v: string) {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== "" ? n : null;
+}
+function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
+  const out: any = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = (v === "" || v === undefined) ? null : v;
+  return out;
+}
+function telMask(v: string) { return v.replace(/[^\d+ ]/g, ""); }
+
+/* ---------------- Component ---------------- */
 
 export default function PersonnelFormPro() {
   const router = useRouter();
@@ -64,11 +109,58 @@ export default function PersonnelFormPro() {
     extra: "",
   });
 
+  // listes pour dropdowns
+  const [services, setServices] = useState<ServiceDTO[]>([]);
+  const [users, setUsers] = useState<UserMini[]>([]);
+  const [loadingLists, setLoadingLists] = useState(true);
+
+  // auto rôle basé sur service
+  const [autoRoles, setAutoRoles] = useState<string[]>([]);
+
+  // charge services + un lot d’utilisateurs (première page étendue)
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoadingLists(true);
+
+        // Services
+        const svcRes = await listAllServices();
+        const svcArr: ServiceDTO[] = Array.isArray(svcRes?.data)
+          ? svcRes.data
+          : (Array.isArray(svcRes) ? svcRes : []);
+        setServices(svcArr);
+
+        // Users (on charge large pour la dropdown; ajuste per_page au besoin)
+        const usrRes: any = await listUsersPaginated({ page: 1, per_page: 200, search: "" });
+        const usrArr: UserMini[] = Array.isArray(usrRes?.data) ? usrRes.data :
+                                   (Array.isArray(usrRes) ? usrRes : []);
+        setUsers(
+          usrArr
+            .map((u: any) => ({ id: u.id, name: u.name, email: u.email }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      } catch {
+        setServices([]);
+        setUsers([]);
+      } finally {
+        setLoadingLists(false);
+      }
+    })();
+  }, []);
+
+  // Quand service change → calcule le rôle par défaut (si mapping trouvé)
+  useEffect(() => {
+    const s = services.find(x => String(x.id) === data.service_id);
+    if (!s) { setAutoRoles([]); return; }
+    const r = DEFAULT_ROLE_BY_SERVICE[s.slug];
+    setAutoRoles(r ? [r] : []);
+  }, [data.service_id, services]);
+
   const progress = ((step + 1) / steps.length) * 100;
   function upd<K extends keyof Payload>(k: K, v: Payload[K]) { setData(d => ({ ...d, [k]: v })); }
-  function telMask(v: string) { return v.replace(/[^\d+ ]/g, ""); }
   function next() { if (step < steps.length - 1) setStep(step + 1); }
   function prev() { if (step > 0) setStep(step - 1); }
+
   const age = useMemo(() => {
     if (!data.date_of_birth) return "";
     const d = new Date(data.date_of_birth);
@@ -80,27 +172,17 @@ export default function PersonnelFormPro() {
     return a >= 0 ? a : "";
   }, [data.date_of_birth]);
 
-  function toNumberOrNull(v: string) {
-    const n = Number(v);
-    return Number.isFinite(n) && v !== "" ? n : null;
-  }
-  function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
-    const out: any = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = (v === "" || v === undefined) ? null : v;
-    return out;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      // payload aligné migration
+      // payload aligné migration + rôles auto si trouvés
       const raw = {
         user_id: Number(data.user_id),               // requis
         matricule: data.matricule.trim(),            // requis
         first_name: data.first_name.trim(),
         last_name: data.last_name.trim(),
-        sex: data.sex as "M"|"F",
+        sex: data.sex as "M" | "F",
         date_of_birth: data.date_of_birth || null,
         cin: data.cin || null,
         phone_alt: data.phone_alt || null,
@@ -112,11 +194,19 @@ export default function PersonnelFormPro() {
         service_id: toNumberOrNull(data.service_id),
         avatar_path: data.avatar_path || null,
         extra: data.extra ? JSON.parse(data.extra) : null,
+
+        // Si on a un rôle par défaut, on le pousse (PersonnelController les sync côté back)
+        ...(autoRoles.length ? { roles: autoRoles } : {}),
       };
+
       await createPersonnel(nullifyEmpty(raw));
       router.replace("/personnels?flash=created");
     } catch (err: any) {
-      alert("Erreur: " + (err?.message || "inconnue") + "\n\nAstuce: user_id et matricule sont requis, cin unique.");
+      alert(
+        "Erreur: " +
+          (err?.message || "inconnue") +
+          "\n\nAstuce: 'Utilisateur' et 'Matricule' sont requis. 'CIN' doit être unique."
+      );
     } finally { setBusy(false); }
   }
 
@@ -136,12 +226,20 @@ export default function PersonnelFormPro() {
                 const Icon = s.icon; const active = i === step; const done = i < step;
                 return (
                   <li key={s.key}>
-                    <button type="button" onClick={() => setStep(i)}
+                    <button
+                      type="button"
+                      onClick={() => setStep(i)}
                       className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition
-                        ${active ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/30" :
-                          done ? "text-ink-700 hover:bg-ink-50" : "text-ink-500 hover:bg-ink-50"}`}>
-                      <span className={`h-5 w-5 rounded-md flex items-center justify-center
-                        ${active ? "bg-congo-green text-white" : done ? "bg-ink-200 text-ink-800" : "bg-ink-100 text-ink-600"}`}>
+                        ${active ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/30"
+                                 : done ? "text-ink-700 hover:bg-ink-50"
+                                        : "text-ink-500 hover:bg-ink-50"}`}
+                    >
+                      <span
+                        className={`h-5 w-5 rounded-md flex items-center justify-center
+                          ${active ? "bg-congo-green text-white"
+                                   : done ? "bg-ink-200 text-ink-800"
+                                          : "bg-ink-100 text-ink-600"}`}
+                      >
                         {done ? <Check className="h-3 w-3" /> : <Icon className="h-3.5 w-3.5" />}
                       </span>
                       {s.label}
@@ -169,30 +267,62 @@ export default function PersonnelFormPro() {
       <section className="lg:col-span-2 space-y-6">
         {/* Identité */}
         {step === 0 && (
-          <Card title="Identité" icon={<User className="h-4 w-4" />}>
+          <Card title="Identité" icon={<UserIcon className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-              <Field label="User ID (users.id)" required>
-                <input className={inputCls} value={data.user_id} onChange={e=>upd("user_id", e.target.value)} placeholder="ex: 1" />
+              {/* Utilisateur (dropdown) */}
+              <Field label="Utilisateur" required>
+                <select
+                  className={inputCls}
+                  value={data.user_id}
+                  onChange={(e) => upd("user_id", e.target.value)}
+                  disabled={loadingLists}
+                >
+                  <option value="">{loadingLists ? "Chargement..." : "— Sélectionner —"}</option>
+                  {users.map(u => (
+                    <option key={u.id} value={String(u.id)}>
+                      {u.name}{u.email ? ` — ${u.email}` : ""}
+                    </option>
+                  ))}
+                </select>
               </Field>
+
               <Field label="Matricule" required className="sm:col-span-2">
-                <input className={inputCls} value={data.matricule} onChange={e=>upd("matricule", e.target.value.toUpperCase())} placeholder="HOSP-0001" />
+                <input
+                  className={inputCls}
+                  value={data.matricule}
+                  onChange={e => upd("matricule", e.target.value.toUpperCase())}
+                  placeholder="HOSP-0001"
+                />
               </Field>
+
               <Field label="Nom" required>
-                <input className={inputCls} value={data.last_name} onChange={e=>upd("last_name", e.target.value.toUpperCase())} placeholder="NGOMA" />
+                <input
+                  className={inputCls}
+                  value={data.last_name}
+                  onChange={e => upd("last_name", e.target.value.toUpperCase())}
+                  placeholder="NGOMA"
+                />
               </Field>
               <Field label="Prénom" required>
-                <input className={inputCls} value={data.first_name} onChange={e=>upd("first_name", e.target.value)} placeholder="Pierre" />
+                <input
+                  className={inputCls}
+                  value={data.first_name}
+                  onChange={e => upd("first_name", e.target.value)}
+                  placeholder="Pierre"
+                />
               </Field>
+
               <Field label="Sexe">
-                <select className={inputCls} value={data.sex} onChange={e=>upd("sex", e.target.value as any)}>
-                  <option value="M">M</option><option value="F">F</option>
+                <select className={inputCls} value={data.sex} onChange={e => upd("sex", e.target.value as any)}>
+                  <option value="M">M</option>
+                  <option value="F">F</option>
                 </select>
               </Field>
               <Field label="Date de naissance">
-                <input type="date" className={inputCls} value={data.date_of_birth} onChange={e=>upd("date_of_birth", e.target.value)} />
+                <input type="date" className={inputCls} value={data.date_of_birth} onChange={e => upd("date_of_birth", e.target.value)} />
               </Field>
               <Field label="CIN">
-                <input className={inputCls} value={data.cin} onChange={e=>upd("cin", e.target.value)} placeholder="Carte d'identité" />
+                <input className={inputCls} value={data.cin} onChange={e => upd("cin", e.target.value)} placeholder="Carte d'identité" />
               </Field>
             </div>
           </Card>
@@ -203,11 +333,11 @@ export default function PersonnelFormPro() {
           <Card title="Coordonnées" icon={<MapPin className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Téléphone (alt)">
-                <input className={inputCls} value={data.phone_alt} onChange={e=>upd("phone_alt", telMask(e.target.value))} placeholder="+242 06 000 0000" />
+                <input className={inputCls} value={data.phone_alt} onChange={e => upd("phone_alt", telMask(e.target.value))} placeholder="+242 06 000 0000" />
               </Field>
-              <Field label="Adresse"><input className={inputCls} value={data.address} onChange={e=>upd("address", e.target.value)} /></Field>
-              <Field label="Ville"><input className={inputCls} value={data.city} onChange={e=>upd("city", e.target.value)} /></Field>
-              <Field label="Pays"><input className={inputCls} value={data.country} onChange={e=>upd("country", e.target.value)} /></Field>
+              <Field label="Adresse"><input className={inputCls} value={data.address} onChange={e => upd("address", e.target.value)} /></Field>
+              <Field label="Ville"><input className={inputCls} value={data.city} onChange={e => upd("city", e.target.value)} /></Field>
+              <Field label="Pays"><input className={inputCls} value={data.country} onChange={e => upd("country", e.target.value)} /></Field>
             </div>
           </Card>
         )}
@@ -216,9 +346,37 @@ export default function PersonnelFormPro() {
         {step === 2 && (
           <Card title="Emploi & Service" icon={<Briefcase className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Field label="Fonction"><input className={inputCls} value={data.job_title} onChange={e=>upd("job_title", e.target.value)} placeholder="Infirmier, Pharmacien…" /></Field>
-              <Field label="Date d’embauche"><input type="date" className={inputCls} value={data.hired_at} onChange={e=>upd("hired_at", e.target.value)} /></Field>
-              <Field label="Service ID"><input className={inputCls} value={data.service_id} onChange={e=>upd("service_id", e.target.value)} placeholder="ID service (optionnel)" /></Field>
+              <Field label="Fonction">
+                <input
+                  className={inputCls}
+                  value={data.job_title}
+                  onChange={e => upd("job_title", e.target.value)}
+                  placeholder="Infirmier, Pharmacien…"
+                />
+              </Field>
+              <Field label="Date d’embauche">
+                <input type="date" className={inputCls} value={data.hired_at} onChange={e => upd("hired_at", e.target.value)} />
+              </Field>
+
+              {/* Service (dropdown) */}
+              <Field label="Service">
+                <select
+                  className={inputCls}
+                  value={data.service_id}
+                  onChange={(e) => upd("service_id", e.target.value)}
+                  disabled={loadingLists}
+                >
+                  <option value="">{loadingLists ? "Chargement..." : "— Sélectionner —"}</option>
+                  {services.map(s => (
+                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                  ))}
+                </select>
+                {autoRoles.length > 0 && (
+                  <p className="mt-1 text-xs text-ink-600">
+                    Rôle par défaut&nbsp;: <b>{autoRoles.join(", ")}</b> (sera attribué à l’utilisateur lié).
+                  </p>
+                )}
+              </Field>
             </div>
           </Card>
         )}
@@ -228,10 +386,10 @@ export default function PersonnelFormPro() {
           <Card title="Avatar & Extra" icon={<Building2 className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Avatar (chemin relatif)">
-                <input className={inputCls} value={data.avatar_path} onChange={e=>upd("avatar_path", e.target.value)} placeholder="/storage/avatars/123.jpg" />
+                <input className={inputCls} value={data.avatar_path} onChange={e => upd("avatar_path", e.target.value)} placeholder="/storage/avatars/123.jpg" />
               </Field>
               <Field label="Extra (JSON)">
-                <textarea rows={4} className={inputCls} value={data.extra} onChange={e=>upd("extra", e.target.value)} placeholder='{"badge":"or"}' />
+                <textarea rows={4} className={inputCls} value={data.extra} onChange={e => upd("extra", e.target.value)} placeholder='{"badge":"or"}' />
               </Field>
             </div>
           </Card>
@@ -242,13 +400,29 @@ export default function PersonnelFormPro() {
           <div className="rounded-xl bg-white/90 backdrop-blur border border-ink-100 shadow p-3 flex items-center justify-between">
             <div className="text-xs text-ink-600">Étape <b>{step + 1}</b> / {steps.length}</div>
             <div className="flex items-center gap-2">
-              {step > 0 && <button type="button" className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50" onClick={prev}>Précédent</button>}
+              {step > 0 && (
+                <button
+                  type="button"
+                  className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
+                  onClick={prev}
+                >
+                  Précédent
+                </button>
+              )}
               {step < steps.length - 1 ? (
-                <button type="button" className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700" onClick={next}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                  onClick={next}
+                >
                   Suivant <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
-                <button type="submit" disabled={busy} className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+                >
                   {busy ? "Enregistrement…" : "Enregistrer"}
                 </button>
               )}
@@ -259,6 +433,8 @@ export default function PersonnelFormPro() {
     </form>
   );
 }
+
+/* ---------------- UI helpers ---------------- */
 
 function Card({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode; }) {
   return (
@@ -276,4 +452,5 @@ function Field({ label, required, className, children }: { label: string; requir
     </div>
   );
 }
-const inputCls = "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";
+const inputCls =
+  "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";

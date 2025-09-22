@@ -7,8 +7,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
-import { getToken, me, listPersonnelsPaginated, deletePersonnel } from "@/lib/api";
-import { Search, Plus, Pencil, Trash2, Eye, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, CheckCircle2, X } from "lucide-react";
+import { listPersonnelsPaginated, deletePersonnel, listAllServices } from "@/lib/api";
+import { AdminGuard } from "@/lib/authz";
+import {
+  Search, Plus, Pencil, Trash2, Eye,
+  ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight,
+  CheckCircle2, X
+} from "lucide-react";
 
 type Row = {
   id: number;
@@ -23,9 +28,19 @@ type Row = {
   hired_at?: string|null;
 };
 
+type ServiceMini = { id: number; name: string };
+
 const PAGE_SIZE = 15;
 
 export default function PersonnelsListPage() {
+  return (
+    <AdminGuard>
+      <PersonnelsListInner />
+    </AdminGuard>
+  );
+}
+
+function PersonnelsListInner() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -37,14 +52,9 @@ export default function PersonnelsListPage() {
   const [err, setErr] = useState<string | null>(null);
   const [toast, setToast] = useState<{ show: boolean; text: string }>({ show: false, text: "" });
 
-  const lastPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
+  const [serviceMap, setServiceMap] = useState<Map<number, string>>(new Map());
 
-  // Garde admin/token
-  useEffect(() => {
-    const t = getToken();
-    if (!t) { window.location.replace("/login?next=/personnels"); return; }
-    me().catch(() => window.location.replace("/login?next=/personnels"));
-  }, []);
+  const lastPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
   // Flash
   useEffect(() => {
@@ -57,6 +67,19 @@ export default function PersonnelsListPage() {
       return () => clearTimeout(tid);
     }
   }, [sp, router]);
+
+  // Charger services pour afficher leur nom
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await listAllServices();
+        const arr: ServiceMini[] = Array.isArray(raw) ? raw : (raw.data ?? raw ?? []);
+        setServiceMap(new Map(arr.map(s => [s.id, s.name])));
+      } catch {
+        // silencieux : on gardera l'ID si échec
+      }
+    })();
+  }, []);
 
   async function load() {
     setBusy(true); setErr(null);
@@ -173,8 +196,8 @@ export default function PersonnelsListPage() {
                   <Td>{r.sex || "—"}</Td>
                   <Td>{r.job_title || "—"}</Td>
                   <Td>{r.phone_alt || "—"}</Td>
-                  <Td>{r.service_id ?? "—"}</Td>
-                  <Td>{r.hired_at || "—"}</Td>
+                  <Td>{r.service_id ? (serviceMap.get(r.service_id) ?? r.service_id) : "—"}</Td>
+                  <Td>{r.hired_at ? new Date(r.hired_at).toLocaleDateString() : "—"}</Td>
                   <Td className="text-right pr-3">
                     <div className="inline-flex items-center gap-1">
                       <Link href={`/personnels/${r.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>

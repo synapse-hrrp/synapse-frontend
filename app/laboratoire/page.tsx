@@ -1,3 +1,4 @@
+// app/laboratoire/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -7,18 +8,41 @@ import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { listLaboratoiresPaginated, deleteLaboratoire } from "@/lib/api";
-import { Search, Plus, Eye, Pencil, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from "lucide-react";
+import { AbilityGuard, useAuthz } from "@/lib/authz";
+import {
+  Search, Plus, Eye, Pencil, Trash2,
+  ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight
+} from "lucide-react";
 
 type Row = {
-  id: string; test_code: string; test_name: string; specimen?: string|null;
-  status?: "pending"|"in_progress"|"validated"|"canceled";
+  id: string;
+  test_code: string;
+  test_name: string;
+  specimen?: string | null;
+  status?: "pending" | "in_progress" | "validated" | "canceled";
   patient?: { nom: string; prenom: string; numero_dossier?: string } | null;
-  requested_at?: string|null; validated_at?: string|null;
+  requested_at?: string | null;
+  validated_at?: string | null;
 };
 
 const PAGE_SIZE = 15;
+
 export default function LaboList() {
-  const sp = useSearchParams(); const router = useRouter();
+  // ⬇️ Accès autorisé si admin OU labo.view / labo.request.create / labo.result.write
+  return (
+    <AbilityGuard anyOf={["labo.view", "labo.request.create", "labo.result.write"]}>
+      <LaboListInner />
+    </AbilityGuard>
+  );
+}
+
+function LaboListInner() {
+  const sp = useSearchParams();
+  const router = useRouter();
+
+  const { can, isAdmin } = useAuthz(); // depuis lib/authz
+  const canCreate = isAdmin || can("labo.request.create");
+
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -31,7 +55,8 @@ export default function LaboList() {
 
   useEffect(() => {
     if (sp?.get("flash") === "created") {
-      setTimeout(() => router.replace("/laboratoire"), 100); // nettoie l’URL
+      // nettoie l’URL puis recharge la liste
+      router.replace("/laboratoire", { scroll: false });
     }
   }, [sp, router]);
 
@@ -45,7 +70,9 @@ export default function LaboList() {
     } catch (e: any) {
       setErr(e?.message || "Erreur de chargement");
       setRows([]); setTotal(0);
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page]);
 
@@ -72,11 +99,19 @@ export default function LaboList() {
         {/* Fil d’Ariane + actions */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <nav className="text-sm text-ink-600">
-            <ol className="flex items-center gap-2"><li>Portail</li><li aria-hidden>/</li><li className="font-medium text-ink-900">Laboratoire</li></ol>
+            <ol className="flex items-center gap-2">
+              <li>Portail</li><li aria-hidden>/</li><li className="font-medium text-ink-900">Laboratoire</li>
+            </ol>
           </nav>
-          <Link href="/laboratoire/new" className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">
-            <Plus className="h-4 w-4" /> Nouvel examen
-          </Link>
+
+          {canCreate && (
+            <Link
+              href="/laboratoire/new"
+              className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700"
+            >
+              <Plus className="h-4 w-4" /> Nouvel examen
+            </Link>
+          )}
         </div>
 
         {/* Flash */}
@@ -91,19 +126,29 @@ export default function LaboList() {
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
-              <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Code/nom test, patient, N° dossier…"
-                     className="w-full rounded-lg border border-ink-100 bg-white pl-9 pr-3 py-2.5 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20" />
+              <input
+                value={q}
+                onChange={(e)=>setQ(e.target.value)}
+                placeholder="Code/nom test, patient, N° dossier…"
+                className="w-full rounded-lg border border-ink-100 bg-white pl-9 pr-3 py-2.5 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20"
+              />
             </div>
-            <select value={status} onChange={(e)=>setStatus(e.target.value)}
-              className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm">
+            <select
+              value={status}
+              onChange={(e)=>setStatus(e.target.value)}
+              className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm"
+            >
               <option value="">Tous statuts</option>
               <option value="pending">En attente</option>
               <option value="in_progress">En cours</option>
               <option value="validated">Validé</option>
               <option value="canceled">Annulé</option>
             </select>
-            <button type="submit" disabled={busy}
-              className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm hover:bg-ink-50 disabled:opacity-60">
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm hover:bg-ink-50 disabled:opacity-60"
+            >
               Rechercher
             </button>
           </div>
@@ -114,23 +159,36 @@ export default function LaboList() {
           <table className="w-full text-sm">
             <thead className="bg-ink-50 text-ink-700">
               <tr>
-                <Th>Test</Th><Th>Patient</Th><Th>Specimen</Th><Th>Statut</Th><Th>Demandé</Th><Th className="text-right pr-3">Actions</Th>
+                <Th>Test</Th>
+                <Th>Patient</Th>
+                <Th>Specimen</Th>
+                <Th>Statut</Th>
+                <Th>Demandé</Th>
+                <Th className="text-right pr-3">Actions</Th>
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && !busy && <tr><td colSpan={6} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>}
+              {rows.length === 0 && !busy && (
+                <tr><td colSpan={6} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>
+              )}
               {rows.map(r => (
                 <tr key={r.id} className="border-t border-ink-100 hover:bg-ink-50/40">
-                  <Td className="font-medium">{r.test_name} <span className="text-ink-500">({r.test_code})</span></Td>
+                  <Td className="font-medium">
+                    {r.test_name} <span className="text-ink-500">({r.test_code})</span>
+                  </Td>
                   <Td>{r.patient ? `${r.patient.nom} ${r.patient.prenom}` : "—"}</Td>
                   <Td>{r.specimen || "—"}</Td>
                   <Td>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${
-                      r.status === "validated" ? "bg-congo-greenL text-congo-green"
-                      : r.status === "canceled" ? "bg-ink-200 text-ink-700"
-                      : r.status === "pending" ? "bg-ink-100 text-ink-700"
-                      : "bg-[color:var(--color-congo-yellow)]/15 text-congo-yellow"
-                    }`}>{r.status || "pending"}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs ${
+                        r.status === "validated" ? "bg-congo-greenL text-congo-green"
+                        : r.status === "canceled" ? "bg-ink-200 text-ink-700"
+                        : r.status === "pending" ? "bg-ink-100 text-ink-700"
+                        : "bg-[color:var(--color-congo-yellow)]/15 text-congo-yellow"
+                      }`}
+                    >
+                      {r.status || "pending"}
+                    </span>
                   </Td>
                   <Td>{r.requested_at ? new Date(r.requested_at).toLocaleString() : "—"}</Td>
                   <Td className="text-right pr-3">
@@ -159,7 +217,9 @@ export default function LaboList() {
 
         {err && <p className="text-sm text-congo-red">{err}</p>}
       </main>
+
       <SiteFooter />
+
       <style jsx global>{`
         .icon-btn { display:inline-flex; align-items:center; justify-content:center; padding:6px; border-radius:8px; color:#111827; }
         .icon-btn:hover { background: #f3f4f6; }
@@ -167,8 +227,17 @@ export default function LaboList() {
     </div>
   );
 }
-function Th({ children, className="" }: any) { return <th className={`px-3 py-2 text-left font-semibold ${className}`}>{children}</th>; }
-function Td({ children, className="" }: any) { return <td className={`px-3 py-2 ${className}`}>{children}</td>; }
+
+function Th({ children, className="" }: any) {
+  return <th className={`px-3 py-2 text-left font-semibold ${className}`}>{children}</th>;
+}
+function Td({ children, className="" }: any) {
+  return <td className={`px-3 py-2 ${className}`}>{children}</td>;
+}
 function PageBtn({ children, disabled, onClick }: any) {
-  return <button disabled={disabled} onClick={onClick} className="rounded-lg border border-ink-100 bg-white px-2.5 py-1.5 hover:bg-ink-50 disabled:opacity-40">{children}</button>;
+  return (
+    <button disabled={disabled} onClick={onClick} className="rounded-lg border border-ink-100 bg-white px-2.5 py-1.5 hover:bg-ink-50 disabled:opacity-40">
+      {children}
+    </button>
+  );
 }

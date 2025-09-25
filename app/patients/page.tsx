@@ -7,8 +7,14 @@ import { useSearchParams, useRouter } from "next/navigation";
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
-import { Search, Plus, Pencil, Trash2, Eye, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, CheckCircle2, X } from "lucide-react";
-import { getToken, me, listPatientsPaginated, deletePatient } from "@/lib/api";
+import {
+  Search, Plus, Pencil, Trash2, Eye,
+  ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight,
+  CheckCircle2, X
+} from "lucide-react";
+
+import { listPatientsPaginated, deletePatient } from "@/lib/api";
+import { useAuthz, Can } from "@/lib/authz";
 
 type PatientRow = {
   id: string;                      // uuid
@@ -42,6 +48,7 @@ function ageFrom(dob?: string | null, fallback?: number | null) {
 export default function PatientsListPage() {
   const router = useRouter();
   const sp = useSearchParams();
+  const { isAuthenticated, can } = useAuthz();
 
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -54,27 +61,34 @@ export default function PatientsListPage() {
 
   const lastPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
-  // Garde (Option A)
+  // Guard minimal côté client : auth + permission de lecture
   useEffect(() => {
-    const t = getToken();
-    if (!t) { window.location.replace("/login?next=/patients"); return; }
-    me().catch(() => window.location.replace("/login?next=/patients"));
-  }, []);
+    if (!isAuthenticated) {
+      const next = encodeURIComponent("/patients");
+      window.location.replace(`/login?next=${next}`);
+      return;
+    }
+    if (!can("patients.read") && !can("patients.view")) {
+      router.replace("/403");
+    }
+  }, [isAuthenticated, can, router]);
 
   // Flash message (?flash=created)
   useEffect(() => {
     const flash = sp?.get("flash");
     if (flash === "created") {
       setToast({ show: true, text: "Patient enregistré avec succès." });
-      // Nettoie l'URL sans recharger ni scroller
       router.replace("/patients", { scroll: false });
-      // Auto-hide
       const tid = setTimeout(() => setToast({ show: false, text: "" }), 4000);
       return () => clearTimeout(tid);
     }
   }, [sp, router]);
 
   async function load() {
+    if (!can("patients.read") && !can("patients.view")) {
+      setRows([]); setTotal(0);
+      return;
+    }
     setBusy(true); setErr(null);
     try {
       const payload: any = await listPatientsPaginated({ page, per_page: PAGE_SIZE, search: q });
@@ -90,7 +104,7 @@ export default function PatientsListPage() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, can]);
 
   function resetAndSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -99,6 +113,11 @@ export default function PatientsListPage() {
   }
 
   async function onDelete(id: string) {
+    // filet de sécurité UI + côté serveur (l'API vérifiera aussi)
+    if (!can("patients.delete")) {
+      alert("Vous n’avez pas la permission de supprimer un patient.");
+      return;
+    }
     if (!confirm("Supprimer ce patient ? L’opération est définitive.")) return;
     try {
       setBusy(true);
@@ -132,12 +151,14 @@ export default function PatientsListPage() {
             </ol>
           </nav>
 
-          <Link
-            href="/patients/new"
-            className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
-          >
-            <Plus className="h-4 w-4" /> Nouveau patient
-          </Link>
+          <Can any={["patients.create","patients.write"]}>
+            <Link
+              href="/patients/new"
+              className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
+            >
+              <Plus className="h-4 w-4" /> Nouveau patient
+            </Link>
+          </Can>
         </div>
 
         {/* Barre de recherche */}
@@ -200,11 +221,17 @@ export default function PatientsListPage() {
                     </Td>
                     <Td className="text-right pr-3">
                       <div className="inline-flex items-center gap-1">
-                        <Link href={`/patients/${p.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
-                        <Link href={`/patients/${p.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
-                        <button onClick={() => onDelete(p.id)} className="icon-btn text-congo-red" aria-label="Supprimer">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <Can any={["patients.read","patients.view"]}>
+                          <Link href={`/patients/${p.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
+                        </Can>
+                        <Can any={["patients.write","patients.update"]}>
+                          <Link href={`/patients/${p.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
+                        </Can>
+                        <Can any={["patients.delete"]}>
+                          <button onClick={() => onDelete(p.id)} className="icon-btn text-congo-red" aria-label="Supprimer">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </Can>
                       </div>
                     </Td>
                   </tr>

@@ -30,7 +30,7 @@ function getRoleNames(user: AnyObj): string[] {
 
 /* --------- mapping service -> route front ---------- */
 const SERVICE_NAME_TO_SLUG: Record<string, string> = {
-  "Accueil / Réception": "accueil",
+  "Accueil / Réception": "reception",
   "Consultations": "consultations",
   "Médecine Générale": "medecine",
   "Accueil & Urgences (ARU)": "aru",
@@ -52,7 +52,7 @@ const SERVICE_NAME_TO_SLUG: Record<string, string> = {
   "Gestion du Personnel": "personnel",
 };
 const ROLE_TO_SLUG: Record<string, string> = {
-  reception: "accueil",
+  reception: "reception",
   medecin: "consultations",
   infirmier: "pansement",
   laborantin: "laboratoire",
@@ -70,7 +70,7 @@ function serviceSlugToPath(slug?: string | null): string | null {
 /* ----- Tiles statiques (admin voit tout, autres n’entrent plus ici) ----- */
 type Tile = { slug: string; label: string; desc: string; href: string };
 const SERVICE_TILES: Tile[] = [
-  { slug: "accueil",          label: "Accueil / Réception",              desc: "Orientation & accueil",         href: "/accueil" },
+  { slug: "reception",          label: "Accueil / Réception",              desc: "Orientation & accueil",         href: "/reception" },
   { slug: "consultations",    label: "Consultations",                    desc: "Consultations médicales",       href: "/consultations" },
   { slug: "medecine",         label: "Médecine Générale",                desc: "Consultations",                 href: "/medecine" },
   { slug: "aru",              label: "Accueil & Urgences (ARU)",         desc: "Triage & urgences",             href: "/aru" },

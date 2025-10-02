@@ -2,19 +2,20 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Phone, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 
 import TopIdentityBar from "@/components/TopIdentityBar";
 import { login } from "@/lib/api";
+import { setAuthSession } from "@/lib/authz";
 
 /* ---------------- Helpers redirection ---------------- */
 
 type AnyObj = Record<string, any>;
 
 const SERVICE_NAME_TO_SLUG: Record<string, string> = {
-  "Accueil / Réception": "accueil",
+  "Accueil / Réception": "reception",
   "Consultations": "consultations",
   "Médecine Générale": "medecine",
   "Accueil & Urgences (ARU)": "aru",
@@ -38,7 +39,7 @@ const SERVICE_NAME_TO_SLUG: Record<string, string> = {
 
 // pour deviner un service si on ne reçoit pas la relation service
 const ROLE_TO_SLUG: Record<string, string> = {
-  reception: "accueil",
+  reception: "reception",
   medecin: "consultations",
   infirmier: "pansement",
   laborantin: "laboratoire",
@@ -69,9 +70,33 @@ function serviceSlugToPath(slug?: string | null): string | null {
   return `/${slug}`;
 }
 
+/** Vérifie et "nettoie" ?next= pour éviter le contournement des règles d'accès */
+function safeNext(user: AnyObj, nextUrl: string): string | null {
+  if (!nextUrl) return null;
+  try {
+    const base =
+      typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const url = new URL(nextUrl, base);
+
+    // 1) Interne uniquement
+    if (url.origin !== base) return null;
+
+    // 2) /portail réservé aux admin/dg
+    const roles = getRoleNames(user).map((r) => String(r).toLowerCase());
+    const isAdmin = roles.includes("admin") || roles.includes("dg");
+    if (!isAdmin && url.pathname === "/portail") return null;
+
+    // OK
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return null;
+  }
+}
+
 function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string): string {
-  // 1) priorité à ?next= si présent
-  if (nextUrl) return nextUrl;
+  // Tente d'abord un next sécurisé
+  const nextSafe = safeNext(user, nextUrl);
+  if (nextSafe) return nextSafe;
 
   const roles = getRoleNames(user).map((r) => String(r).toLowerCase());
   const isAdmin = roles.includes("admin") || roles.includes("dg");
@@ -107,8 +132,12 @@ function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string
     else if (perms.has("patients.read") || perms.has("visites.read")) slug = "accueil";
   }
 
-  // 6) fallback final
-  return serviceSlugToPath(slug) || "/portail";
+  // 6) non-admin : si un service a été trouvé → on y va ; sinon retour login avec message.
+  const path = serviceSlugToPath(slug);
+  if (path) return path;
+
+  // ⚠️ non-admin sans service → retour login (PAS /portail)
+  return "/login?error=noservice";
 }
 
 /* ---------------- Helpers UI/phone ---------------- */
@@ -179,6 +208,14 @@ export default function LoginPage() {
   const nextUrl = useMemo(() => getParam(sp as any, "next") || "", [sp]);
   const serviceLabel = requestedService || "(sélection automatique)";
 
+  // Afficher un message lorsqu'on revient ici sans service associé
+  useEffect(() => {
+    const err = getParam(sp as any, "error");
+    if (err === "noservice") {
+      setError("Votre compte n'est associé à aucun service. Veuillez contacter l'administrateur.");
+    }
+  }, [sp]);
+
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     // CapsLock
     if ((e as any).getModifierState && (e as any).getModifierState("CapsLock") !== undefined) {
@@ -210,12 +247,12 @@ export default function LoginPage() {
     if (display.trim()) validatePhoneForUI(display);
   }
 
-  const canSubmit =
-    mode === "email"
-      ? !!email && !!password
-      : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
+    const canSubmit =
+      mode === "email"
+        ? !!email && !!password
+        : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
 
-  async function handleLogin() {
+    async function handleLogin() {
     setError(null);
     setLoading(true);
 
@@ -233,10 +270,13 @@ export default function LoginPage() {
         data = await login({ mode: "phone", phone: norm, password });
       }
 
-      // computeRedirect gère admin → /portail, sinon → /<service>
+      // ✅ on persiste la session proprement
+      setAuthSession(data.token, data.user);
+
+      // ta logique existante de redirection (admin → /portail, sinon → service)
       const target = computeRedirect(data.user, requestedService, nextUrl);
       setLoading(false);
-      router.replace(target);
+      window.location.replace(target);
     } catch (e: any) {
       setLoading(false);
       setError(e?.message || "Identifiant ou mot de passe incorrect.");
@@ -244,6 +284,7 @@ export default function LoginPage() {
       requestAnimationFrame(() => pwdRef.current?.focus());
     }
   }
+
 
   function onSwitchMode(next: "email" | "phone") {
     setMode(next);

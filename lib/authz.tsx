@@ -1,3 +1,4 @@
+// lib/authz.tsx
 "use client";
 
 import * as React from "react";
@@ -5,19 +6,65 @@ import { usePathname, useRouter } from "next/navigation";
 import { ACCESS_RULES, PUBLIC_ROUTES } from "./route-access";
 
 /* ------------------------------------------------------------------ */
-/* Session helpers (utilisés aussi par lib/api.ts)                     */
+/* Session helpers (utilisés aussi par lib/api.ts et le header)       */
 /* ------------------------------------------------------------------ */
 
 export function setAuthSession(token: string, user: any) {
   if (typeof window === "undefined") return;
-  sessionStorage.setItem("auth:token", token);
-  sessionStorage.setItem("auth:user", JSON.stringify(user || null));
+  try {
+    sessionStorage.setItem("auth:token", token);
+    sessionStorage.setItem("auth:user", JSON.stringify(user || null));
+  } catch {}
 }
 
+export function readUserFromSession(): any | null {
+  try {
+    const raw = sessionStorage.getItem("auth:user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function deleteCookie(name: string) {
+  try {
+    document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
+    document.cookie = `${name}=; Max-Age=0; path=/; domain=${location.hostname}; SameSite=Lax`;
+  } catch {}
+}
+
+/** Nettoyage complet du navigateur */
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
-  sessionStorage.removeItem("auth:token");
-  sessionStorage.removeItem("auth:user");
+  try {
+    // clés connues
+    sessionStorage.removeItem("auth:token");
+    sessionStorage.removeItem("auth:user");
+    // purge large "auth:*"
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i) ?? "";
+      if (k.startsWith("auth:")) sessionStorage.removeItem(k);
+    }
+  } catch {}
+
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i) ?? "";
+      if (k.startsWith("auth:")) localStorage.removeItem(k);
+    }
+  } catch {}
+
+  // cookies potentiels liés à l’auth (adapte si besoin)
+  deleteCookie("auth_token");
+  deleteCookie("auth_roles");
+  deleteCookie("is_admin");
+}
+
+/** Déconnexion unifiée + redirection propre */
+export function logoutAndRedirect(redirectTo = "/login") {
+  clearAuthSession();
+  try { window.history.replaceState(null, "", redirectTo); } catch {}
+  window.location.replace(redirectTo);
 }
 
 /* ------------------------------------------------------------------ */
@@ -33,15 +80,6 @@ function pickArrayOfStrings(x: any): string[] {
       .map((s) => String(s).toLowerCase());
   }
   return [];
-}
-
-function readUserFromSession(): any | null {
-  try {
-    const raw = sessionStorage.getItem("auth:user");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
 }
 
 function getRoles(u: any): string[] {
@@ -66,7 +104,7 @@ function getAbilities(u: any, isSuper: boolean): string[] {
 }
 
 /* ------------------------------------------------------------------ */
-/* Hook d’autorisation (API compatible avec l’ancien)                  */
+/* Hook d’autorisation                                                 */
 /* ------------------------------------------------------------------ */
 
 export function useAuthz() {
@@ -74,10 +112,10 @@ export function useAuthz() {
     const token = typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
     const user = typeof window !== "undefined" ? readUserFromSession() : null;
     const roles = getRoles(user);
-    const isAdmin = roles.includes("admin") || roles.includes("dg"); // ✅ admin & dg
+    const isAdmin = roles.includes("admin") || roles.includes("dg");
     const abilities = getAbilities(user, isAdmin);
     return {
-      ready: false,                 // nouveau (non bloquant)
+      ready: false,
       user,
       token,
       roles,
@@ -87,7 +125,6 @@ export function useAuthz() {
     };
   });
 
-  // Se resynchroniser si la session change (autre onglet, logout, etc.)
   React.useEffect(() => {
     const sync = () => {
       const token = sessionStorage.getItem("auth:token");
@@ -105,14 +142,11 @@ export function useAuthz() {
         isAuthenticated: !!token,
       });
     };
-    // 1) au mount
     sync();
-    // 2) sur storage
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
   }, []);
 
-  // Helpers compatibles
   const can = React.useCallback(
     (perm: string) => {
       if (state.isAdmin) return true;
@@ -128,7 +162,7 @@ export function useAuthz() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Guards réutilisables (compatibles)                                  */
+/* Guards réutilisables                                                */
 /* ------------------------------------------------------------------ */
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -153,7 +187,6 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
       const next = encodeURIComponent(window.location.pathname + window.location.search);
       window.location.replace(`/login?next=${next}`);
     } else if (!isAdmin) {
-      // 403 → renvoie vers page 403 ou portail si tu préfères
       window.location.replace("/403");
     }
   }, [isAuthenticated, isAdmin]);
@@ -210,23 +243,9 @@ export function AbilityGuard({
 }
 
 /* ------------------------------------------------------------------ */
-/* Bonus modernes (optionnels)                                         */
+/* RouteGuard GLOBAL                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Masquer/afficher un fragment d’UI selon des permissions */
-export function Can({ any = [], all = [], children }: { any?: string[]; all?: string[]; children: React.ReactNode; }) {
-  const { isAdmin, abilities } = useAuthz();
-  const set = React.useMemo(() => new Set(abilities), [abilities]);
-  const okAny = any.length ? any.some((p) => set.has(p)) : true;
-  const okAll = all.length ? all.every((p) => set.has(p)) : true;
-  if (isAdmin || (okAny && okAll)) return <>{children}</>;
-  return null;
-}
-
-/**
- * Garde GLOBAL basé sur des règles d’URL (ACCESS_RULES)
- * - Ajoute <RouteGuard /> UNE FOIS dans app/layout.tsx
- */
 export function RouteGuard() {
   const router = useRouter();
   const pathname = usePathname();
@@ -235,20 +254,25 @@ export function RouteGuard() {
   React.useEffect(() => {
     if (!ready) return;
 
-    // Routes publiques
+    // 1) routes publiques
     if (PUBLIC_ROUTES.some((rx) => rx.test(pathname))) return;
 
-    // Auth obligatoire
+    // 2) auth obligatoire
     if (!isAuthenticated) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
 
-    // Cherche une règle qui matche l’URL
-    const rule = ACCESS_RULES.find((r) => r.pattern.test(pathname));
-    if (!rule) return; // pas de règle => on laisse passer
+    // 3) /portail strict: admin/dg uniquement (bypass ACCESS_RULES)
+    if (pathname.startsWith("/portail") && !isAdmin) {
+      router.replace("/login?error=forbidden");
+      return;
+    }
 
-    // Évaluation de la règle
+    // 4) règles custom (facultatives)
+    const rule = ACCESS_RULES.find((r) => r.pattern.test(pathname));
+    if (!rule) return;
+
     const roleSet = new Set(roles);
     const permSet = new Set(abilities);
     const allowedByRole = rule.allowRoles?.some((r) => roleSet.has(r)) ?? false;

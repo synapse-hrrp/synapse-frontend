@@ -23,8 +23,8 @@ export default function VisiteFormPro() {
   // Garde d’accès
   useEffect(() => {
     const t = getToken();
-    if (!t) { window.location.replace("/login?next=/visites/new"); return; }
-    me().catch(() => window.location.replace("/login?next=/visites/new"));
+    if (!t) { window.location.replace("/login?next=/reception/visites/new"); return; }
+    me().catch(() => window.location.replace("/login?next=/reception/visites/new"));
   }, []);
 
   const [step, setStep] = useState(0);
@@ -129,7 +129,7 @@ export default function VisiteFormPro() {
         service_id: Number(serviceId),
         plaintes_motif: motif.trim(),
       });
-      router.replace("/visites?flash=created");
+      router.replace("/reception/visites?flash=created");
     } catch (err: any) {
       alert("Erreur: " + (err?.message || "inconnue"));
     } finally { setBusy(false); }

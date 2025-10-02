@@ -1,23 +1,25 @@
+// components/SiteHeader.tsx
 "use client";
 
 import Link from "next/link";
 import Image from "next/image";
 import { Search, Bell, LogOut } from "lucide-react";
 import TriStripe from "./TriStripe";
+import { logoutAndRedirect } from "@/lib/authz";
 
 type Props = {
-  logoSrc?: string;                 // Image du logo (depuis /public)
-  title?: string;                   // Titre de la page
-  subtitle?: string;                // Sous-titre (optionnel)
-  homeHref?: string;                // Lien du bloc logo+titre
-  avatarSrc?: string;               // Avatar utilisateur
-  showSearch?: boolean;             // Affiche / masque la barre de recherche
-  searchPlaceholder?: string;       // Placeholder du champ de recherche
-  onSearch?: (q: string) => void;   // Callback de recherche
-  showBell?: boolean;               // Affiche la cloche de notif
-  onLogout?: () => void;            // Déconnexion
-  rightSlot?: React.ReactNode;      // Zone d’action à droite (custom par page)
-  showStripe?: boolean;             // Afficher la barre tri-couleur (par défaut true)
+  logoSrc?: string;
+  title?: string;
+  subtitle?: string;
+  homeHref?: string;
+  avatarSrc?: string;
+  showSearch?: boolean;
+  searchPlaceholder?: string;
+  onSearch?: (q: string) => void;
+  showBell?: boolean;
+  onLogout?: () => void; // si fourni on l’utilise, sinon logout global
+  rightSlot?: React.ReactNode;
+  showStripe?: boolean;
 };
 
 export default function SiteHeader({
@@ -34,6 +36,12 @@ export default function SiteHeader({
   rightSlot,
   showStripe = true,
 }: Props) {
+
+  async function handleLogout() {
+    if (onLogout) return onLogout();
+    logoutAndRedirect("/login");
+  }
+
   return (
     <header className="sticky top-0 z-30 border-b bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/75">
       <div className="mx-auto max-w-7xl px-4">
@@ -70,24 +78,30 @@ export default function SiteHeader({
 
           {/* Zone actions droite */}
           <div className={`ml-2 flex items-center gap-2 ${showSearch ? "" : "ml-auto"}`}>
-            {rightSlot /* contenu custom par page (ex: bouton “Nouveau patient”) */}
+            {rightSlot}
 
             {showBell && (
-              <button className="relative rounded-lg p-2 text-ink-700 hover:bg-ink-100 focus:outline-none focus:ring-2 focus:ring-congo-green/30" aria-label="Notifications">
+              <button
+                className="relative rounded-lg p-2 text-ink-700 hover:bg-ink-100 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
+                aria-label="Notifications"
+              >
                 <Bell className="h-5 w-5" />
                 <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-congo-red" />
               </button>
             )}
 
             {/* Avatar */}
-            <button className="rounded-full p-[2px] focus:outline-none focus:ring-2 focus:ring-congo-green/30 hover:ring-2 hover:ring-congo-green/50" aria-label="Profil">
+            <button
+              className="rounded-full p-[2px] focus:outline-none focus:ring-2 focus:ring-congo-green/30 hover:ring-2 hover:ring-congo-green/50"
+              aria-label="Profil"
+            >
               <Image src={avatarSrc} alt="Profil utilisateur" width={32} height={32} className="rounded-full object-cover" />
             </button>
 
             {/* Déconnexion */}
             <button
               className="hidden sm:inline-flex items-center gap-2 rounded-lg bg-white text-ink-700 border border-ink-100 px-3 py-2 text-sm hover:bg-ink-100 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
-              onClick={() => (onLogout ? onLogout() : (window.location.href = "/login"))}
+              onClick={handleLogout}
             >
               <LogOut className="h-4 w-4" />
               Déconnexion

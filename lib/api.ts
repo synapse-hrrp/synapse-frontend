@@ -293,17 +293,25 @@ export async function deleteVisite(id: string | number) {
   return apiFetch(`/visites/${id}`, { method: "DELETE" });
 }
 
-
-/* ------------ Services (CRUD) ------------ */
-export type Service = {
+/* ------------ Services (UNIQUE) ------------ */
+export type ServiceDTO = {
   id: number;
   slug: string;
   name: string;
-  code?: string | null;
-  is_active: boolean;
-  created_at?: string;
-  updated_at?: string;
+  is_active?: boolean;
 };
+
+export async function listAllServices(params: { search?: string } = {}) {
+  const { search = "" } = params;
+  const qp = new URLSearchParams();
+  if (search.trim()) qp.set("search", search.trim());
+  const qs = qp.toString();
+  return apiFetch(`/services${qs ? `?${qs}` : ""}`, { method: "GET" });
+}
+
+// Alias rétro-compatibilité (pour VisiteFormPro qui importe listServices)
+export const listServices = listAllServices;
+
 
 function qs(obj: Record<string, string>) {
   const u = new URLSearchParams(obj);
@@ -317,87 +325,6 @@ export async function listServicesPaginated(params: { page?: number; per_page?: 
     return await apiFetch(`/admin/services?${query}`, { method: "GET" });
   } catch {
     return await apiFetch(`/services?${query}`, { method: "GET" });
-  }
-}
-
-
-export async function listAllServices() {
-  // essaye admin d'abord
-  try {
-    // 1) on tire la première page avec un per_page élevé
-    const perPage = 200;
-    const first = await apiFetch(`/admin/services?page=1&per_page=${perPage}`, { method: "GET" });
-    const firstData = first?.data ?? (Array.isArray(first) ? first : []);
-    const total = first?.meta?.total ?? firstData.length;
-
-    // 2) si tout tient dans la première page → on renvoie
-    if (firstData.length >= total) {
-      return firstData;
-    }
-
-    // 3) sinon on boucle pour récupérer les pages suivantes
-    const pages = Math.max(1, Math.ceil(total / (first?.meta?.per_page || perPage)));
-    const all = [...firstData];
-    for (let p = 2; p <= pages; p++) {
-      const next = await apiFetch(`/admin/services?page=${p}&per_page=${perPage}`, { method: "GET" });
-      const nextData = next?.data ?? (Array.isArray(next) ? next : []);
-      all.push(...nextData);
-    }
-    return all;
-  } catch {
-    // fallback: route publique /services
-    try {
-      const perPage = 200;
-      const first = await apiFetch(`/services?page=1&per_page=${perPage}`, { method: "GET" });
-      const firstData = first?.data ?? (Array.isArray(first) ? first : []);
-      const total = first?.meta?.total ?? firstData.length;
-
-      if (firstData.length >= total) return firstData;
-
-      const pages = Math.max(1, Math.ceil(total / (first?.meta?.per_page || perPage)));
-      const all = [...firstData];
-      for (let p = 2; p <= pages; p++) {
-        const next = await apiFetch(`/services?page=${p}&per_page=${perPage}`, { method: "GET" });
-        const nextData = next?.data ?? (Array.isArray(next) ? next : []);
-        all.push(...nextData);
-      }
-      return all;
-    } catch {
-      return [];
-    }
-  }
-}
-
-
-export async function createService(payload: Partial<Service>) {
-  try {
-    return await apiFetch(`/admin/services`, { method: "POST", body: JSON.stringify(payload) });
-  } catch {
-    return await apiFetch(`/services`, { method: "POST", body: JSON.stringify(payload) });
-  }
-}
-
-export async function getService(id: string | number) {
-  try {
-    return await apiFetch(`/admin/services/${id}`, { method: "GET" });
-  } catch {
-    return await apiFetch(`/services/${id}`, { method: "GET" });
-  }
-}
-
-export async function updateService(id: string | number, payload: Partial<Service>) {
-  try {
-    return await apiFetch(`/admin/services/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-  } catch {
-    return await apiFetch(`/services/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-  }
-}
-
-export async function deleteService(id: string | number) {
-  try {
-    return await apiFetch(`/admin/services/${id}`, { method: "DELETE" });
-  } catch {
-    return await apiFetch(`/services/${id}`, { method: "DELETE" });
   }
 }
 

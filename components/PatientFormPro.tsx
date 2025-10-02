@@ -1,171 +1,235 @@
 // components/PatientFormPro.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { Check, ChevronRight, User, Phone, Calendar, Shield, Syringe, Heart, MapPin } from "lucide-react";
-import { createPatient } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  getPatient,
+  createPatient,
+  updatePatient,
+} from "@/lib/api";
+import { Check, ChevronRight, User, MapPin, Phone, Briefcase, FileText } from "lucide-react";
 
-type Payload = {
+/* ---------------- Types ---------------- */
+
+type Props = {
+  patientId?: string;           // si présent => mode édition
+  afterSavePath?: string;       // où rediriger après sauvegarde
+};
+
+type PatientPayload = {
+  // Identité
   nom: string;
   prenom: string;
-  date_naissance: string;                 // "YYYY-MM-DD" ou ""
+  date_naissance: string;                 // "YYYY-MM-DD" | ""
   lieu_naissance: string;
-  age_reporte?: string;                   // saisie libre, on convertit en number
-  sexe: "M" | "F";                        // (ajoute "X" si votre back l’utilise)
+  age_reporte?: string;                   // texte libre (converti si besoin)
+  sexe: "M" | "F" | "X";
   nationalite: string;
   profession: string;
+
+  // Adresse & contact
   adresse: string;
   quartier: string;
   telephone: string;
+
+  // État civil
   statut_matrimonial: "celibataire" | "marie" | "veuf" | "divorce" | "";
+
+  // Proche
   proche_nom: string;
   proche_tel: string;
+
+  // Médical
   groupe_sanguin: "A+"|"A-"|"B+"|"B-"|"AB+"|"AB-"|"O+"|"O-"|"";
   allergies: string;
+
+  // Assurance
   assurance_id?: string;
   numero_assure?: string;
+
+  // Divers
+  numero_dossier?: string;
   is_active: boolean;
+};
+
+type PatientFromApi = PatientPayload & {
+  id?: string;
 };
 
 const steps = [
   { key: "identite", label: "Identité", icon: User },
-  { key: "naissance_contact", label: "Naissance & Contact", icon: Calendar },
-  { key: "infos_civiles", label: "Infos civiles", icon: MapPin },
-  { key: "proche_assurance", label: "Proche & Assurance", icon: Shield },
-  { key: "allergies_recap", label: "Allergies & Récap", icon: Heart },
+  { key: "contact", label: "Contact & Adresse", icon: Phone },
+  { key: "etatcivil", label: "État civil & Proche", icon: Briefcase },
+  { key: "medical", label: "Infos médicales", icon: FileText },
 ] as const;
 
-function computeAge(dateISO?: string) {
-  if (!dateISO) return "";
-  const d = new Date(dateISO);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
-  return age >= 0 ? String(age) : "";
-}
+/* ---------------- Helpers ---------------- */
 
 function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
   const out: any = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (v === "" || v === undefined) out[k] = null;
-    else out[k] = v;
+    out[k] = v === "" || v === undefined ? null : v;
   }
   return out;
 }
 
-export default function PatientFormPro() {
+function normalizeFromApi(raw: any): PatientPayload {
+  const it = raw ?? {};
+  return {
+    nom: it.nom ?? "",
+    prenom: it.prenom ?? "",
+    date_naissance: it.date_naissance ?? "",
+    lieu_naissance: it.lieu_naissance ?? "",
+    age_reporte: it.age_reporte ?? "",
+    sexe: (it.sexe ?? "X") as "M" | "F" | "X",
+    nationalite: it.nationalite ?? "",
+    profession: it.profession ?? "",
+    adresse: it.adresse ?? "",
+    quartier: it.quartier ?? "",
+    telephone: it.telephone ?? "",
+    statut_matrimonial: (it.statut_matrimonial ?? "") as PatientPayload["statut_matrimonial"],
+    proche_nom: it.proche_nom ?? "",
+    proche_tel: it.proche_tel ?? "",
+    groupe_sanguin: (it.groupe_sanguin ?? "") as PatientPayload["groupe_sanguin"],
+    allergies: it.allergies ?? "",
+    assurance_id: it.assurance_id ?? "",
+    numero_assure: it.numero_assure ?? "",
+    numero_dossier: it.numero_dossier ?? "",
+    is_active: Boolean(it.is_active ?? true),
+  };
+}
+
+/* ---------------- Component ---------------- */
+
+export default function PatientFormPro({ patientId, afterSavePath = "/reception/patients" }: Props) {
   const router = useRouter();
+  const isEdit = Boolean(patientId);
 
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [data, setData] = useState<Payload>({
+  const [loading, setLoading] = useState(isEdit);
+  const [error, setError] = useState<string | null>(null);
+
+  const [data, setData] = useState<PatientPayload>({
     nom: "",
     prenom: "",
     date_naissance: "",
     lieu_naissance: "",
     age_reporte: "",
-    sexe: "M",
-    nationalite: "Congolaise",
+    sexe: "X",
+    nationalite: "",
     profession: "",
     adresse: "",
     quartier: "",
-    telephone: "+242 ",
+    telephone: "",
     statut_matrimonial: "",
     proche_nom: "",
-    proche_tel: "+242 ",
+    proche_tel: "",
     groupe_sanguin: "",
     allergies: "",
     assurance_id: "",
     numero_assure: "",
+    numero_dossier: "",
     is_active: true,
   });
 
-  const progress = ((step + 1) / steps.length) * 100;
-  const ageAuto = useMemo(() => computeAge(data.date_naissance), [data.date_naissance]);
-  const ageAffiche = data.date_naissance ? ageAuto : (data.age_reporte || "");
+  // Charger données existantes si édition
+  useEffect(() => {
+    if (!isEdit || !patientId) return;
+    let abo = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const res: any = await getPatient(patientId);
+        const raw = res?.data?.data ?? res?.data ?? res;
+        if (!abo) setData(normalizeFromApi(raw));
+      } catch (e: any) {
+        if (!abo) setError(e?.message || "Impossible de charger le patient.");
+      } finally {
+        if (!abo) setLoading(false);
+      }
+    })();
+    return () => { abo = true; };
+  }, [isEdit, patientId]);
 
-  function upd<K extends keyof Payload>(k: K, v: Payload[K]) {
+  function upd<K extends keyof PatientPayload>(k: K, v: PatientPayload[K]) {
     setData((d) => ({ ...d, [k]: v }));
   }
 
-  function telMask(v: string) {
-    return v.replace(/[^\d+ ]/g, "");
-  }
+  const age = useMemo(() => {
+    if (!data.date_naissance) return data.age_reporte || "—";
+    const d = new Date(data.date_naissance + "T00:00:00");
+    if (isNaN(d.getTime())) return data.age_reporte || "—";
+    const now = new Date();
+    let a = now.getFullYear() - d.getFullYear();
+    const m = now.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+    return a >= 0 ? String(a) : (data.age_reporte || "—");
+  }, [data.date_naissance, data.age_reporte]);
 
+  const progress = ((step + 1) / steps.length) * 100;
   function next() { if (step < steps.length - 1) setStep(step + 1); }
   function prev() { if (step > 0) setStep(step - 1); }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError(null);
+
     try {
-      // Payload aligné migration (null si vide, number pour age_reporte)
-      const payloadRaw = {
-        nom: data.nom.trim(),
-        prenom: data.prenom.trim(),
-        date_naissance: data.date_naissance || null,
-        lieu_naissance: data.lieu_naissance || null,
-        age_reporte: data.date_naissance ? null : (data.age_reporte ? Number(data.age_reporte) : null),
-        sexe: data.sexe as "M" | "F", // ajoute "X" si besoin
-        nationalite: data.nationalite || null,
-        profession: data.profession || null,
-        adresse: data.adresse || null,
-        quartier: data.quartier || null,
-        telephone: data.telephone || null,
-        statut_matrimonial: data.statut_matrimonial || null,
-        proche_nom: data.proche_nom || null,
-        proche_tel: data.proche_tel || null,
-        groupe_sanguin: data.groupe_sanguin || null,
-        allergies: data.allergies || null,
-        assurance_id: data.assurance_id || null,
-        numero_assure: data.numero_assure || null,
-        is_active: !!data.is_active,
-      };
-      const payload = nullifyEmpty(payloadRaw);
+      // Nettoyage : convertir les vides en null (selon back)
+      const payload = nullifyEmpty({ ...data });
 
-      await createPatient(payload);
+      if (isEdit && patientId) {
+        await updatePatient(patientId, payload);
+      } else {
+        await createPatient(payload);
+      }
 
-      // ✅ Redirection vers la liste + “flash message”
-      router.replace("/patients?flash=created");
-    } catch (err: any) {
-      alert("Erreur: " + (err?.message || "inconnue"));
+      router.replace(afterSavePath);
+    } catch (e: any) {
+      setError(e?.message || "Erreur lors de l’enregistrement.");
     } finally {
       setBusy(false);
     }
   }
 
+  if (loading) {
+    return <div className="rounded-2xl border border-ink-100 bg-white p-6 shadow-sm animate-pulse h-40" />;
+  }
+
   return (
     <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Colonne gauche : étapes & progression */}
+      {/* Étapes */}
       <aside className="lg:col-span-1">
         <div className="rounded-2xl border border-ink-100 bg-white shadow-sm overflow-hidden sticky top-20">
           <div className="h-1 bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
           <div className="p-4">
-            <div className="mb-3 text-sm font-semibold">Progression</div>
+            <div className="mb-3 text-sm font-semibold">{isEdit ? "Édition" : "Nouveau patient"}</div>
             <div className="h-2 w-full rounded-full bg-ink-100 overflow-hidden">
               <div className="h-full bg-congo-green transition-all" style={{ width: `${progress}%` }} />
             </div>
-
             <ul className="mt-4 space-y-1">
               {steps.map((s, i) => {
-                const Icon = s.icon;
-                const active = i === step;
-                const done = i < step;
+                const Icon = s.icon; const active = i === step; const done = i < step;
                 return (
                   <li key={s.key}>
                     <button
                       type="button"
                       onClick={() => setStep(i)}
                       className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition
-                        ${active ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/30" :
-                          done ? "text-ink-700 hover:bg-ink-50" :
-                          "text-ink-500 hover:bg-ink-50"}`}
+                        ${active ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/30"
+                                 : done ? "text-ink-700 hover:bg-ink-50"
+                                        : "text-ink-500 hover:bg-ink-50"}`}
                     >
-                      <span className={`h-5 w-5 rounded-md flex items-center justify-center
-                        ${active ? "bg-congo-green text-white" : done ? "bg-ink-200 text-ink-800" : "bg-ink-100 text-ink-600"}`}>
+                      <span
+                        className={`h-5 w-5 rounded-md flex items-center justify-center
+                          ${active ? "bg-congo-green text-white"
+                                   : done ? "bg-ink-200 text-ink-800"
+                                          : "bg-ink-100 text-ink-600"}`}
+                      >
                         {done ? <Check className="h-3 w-3" /> : <Icon className="h-3.5 w-3.5" />}
                       </span>
                       {s.label}
@@ -175,88 +239,98 @@ export default function PatientFormPro() {
               })}
             </ul>
 
-            {/* Résumé live */}
+            {/* Résumé */}
             <div className="mt-5 rounded-xl border border-ink-100 bg-ink-50 p-3 text-sm">
               <div className="font-medium text-ink-800">Résumé</div>
               <div className="mt-1 space-y-1 text-ink-700">
-                <div><b>Patient :</b> {data.nom || "—"} {data.prenom || ""}</div>
-                <div><b>Âge :</b> {ageAffiche || "—"}</div>
-                <div><b>Sexe :</b> {data.sexe}</div>
+                <div><b>Nom :</b> {(data.nom || "—") + " " + (data.prenom || "")}</div>
+                <div><b>Âge :</b> {age}</div>
+                <div><b>Téléphone :</b> {data.telephone || "—"}</div>
                 <div><b>Groupe :</b> {data.groupe_sanguin || "—"}</div>
-                <div><b>Tél :</b> {data.telephone.trim() || "—"}</div>
               </div>
             </div>
+
+            {error && (
+              <div className="mt-4 rounded-lg border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 p-2.5 text-sm text-congo-red">
+                {error}
+              </div>
+            )}
           </div>
         </div>
       </aside>
 
-      {/* Colonne droite : contenu des étapes */}
+      {/* Champs */}
       <section className="lg:col-span-2 space-y-6">
-        {/* Étape 1 : Identité */}
+        {/* Identité */}
         {step === 0 && (
-          <Card title="Identité du patient" icon={<User className="h-4 w-4" />}>
+          <Card title="Identité" icon={<User className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Nom" required>
-                <input className={inputCls} value={data.nom} onChange={e=>upd("nom", e.target.value.toUpperCase())} placeholder="NGOMA" />
+                <input className={inputCls} value={data.nom} onChange={e => upd("nom", e.target.value.toUpperCase())} placeholder="NGOMA" />
               </Field>
               <Field label="Prénom" required>
-                <input className={inputCls} value={data.prenom} onChange={e=>upd("prenom", e.target.value)} placeholder="Pierre" />
+                <input className={inputCls} value={data.prenom} onChange={e => upd("prenom", e.target.value)} placeholder="Pierre" />
               </Field>
               <Field label="Sexe" required>
-                <select className={inputCls} value={data.sexe} onChange={e=>upd("sexe", e.target.value as "M"|"F")}>
-                  <option value="M">Masculin</option>
-                  <option value="F">Féminin</option>
-                  {/* <option value="X">Non spécifié</option> */}
+                <select className={inputCls} value={data.sexe} onChange={e => upd("sexe", e.target.value as any)}>
+                  <option value="M">M</option>
+                  <option value="F">F</option>
+                  <option value="X">X</option>
+                </select>
+              </Field>
+
+              <Field label="Date de naissance">
+                <input type="date" className={inputCls} value={data.date_naissance} onChange={e => upd("date_naissance", e.target.value)} />
+              </Field>
+              <Field label="Âge reporté (texte)">
+                <input className={inputCls} value={data.age_reporte ?? ""} onChange={e => upd("age_reporte", e.target.value)} placeholder="ex: 34" />
+              </Field>
+              <Field label="Lieu de naissance">
+                <input className={inputCls} value={data.lieu_naissance} onChange={e => upd("lieu_naissance", e.target.value)} />
+              </Field>
+
+              <Field label="Nationalité">
+                <input className={inputCls} value={data.nationalite} onChange={e => upd("nationalite", e.target.value)} />
+              </Field>
+              <Field label="Profession">
+                <input className={inputCls} value={data.profession} onChange={e => upd("profession", e.target.value)} />
+              </Field>
+              <Field label="Actif ?">
+                <select className={inputCls} value={String(data.is_active)} onChange={e => upd("is_active", e.target.value === "true")}>
+                  <option value="true">Oui</option>
+                  <option value="false">Non</option>
                 </select>
               </Field>
             </div>
           </Card>
         )}
 
-        {/* Étape 2 : Naissance & Contact */}
+        {/* Contact & Adresse */}
         {step === 1 && (
-          <Card title="Naissance & Contact" icon={<Calendar className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-              <Field label="Date de naissance">
-                <input type="date" className={inputCls} value={data.date_naissance} onChange={e=>upd("date_naissance", e.target.value)} />
-              </Field>
-              <Field label="Âge (auto ou reporté)">
-                <input disabled className="mt-1 w-full rounded-lg border border-ink-100 bg-ink-50 px-3 py-2 text-sm" value={ageAffiche} placeholder="—" />
-                {!data.date_naissance && (
-                  <input type="number" min={0} className={inputCls + " mt-2"} value={data.age_reporte} onChange={e=>upd("age_reporte", e.target.value)} placeholder="Âge reporté" />
-                )}
-              </Field>
-              <Field label="Lieu de naissance" className="sm:col-span-2">
-                <input className={inputCls} value={data.lieu_naissance} onChange={e=>upd("lieu_naissance", e.target.value)} placeholder="Ville, pays" />
-              </Field>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-              <Field label="Téléphone" required icon={<Phone className="h-4 w-4 text-ink-400" />}>
-                <input className={inputCls + " pl-9"} value={data.telephone} onChange={e=>upd("telephone", telMask(e.target.value))} placeholder="+242 06 000 0000" />
+          <Card title="Contact & Adresse" icon={<MapPin className="h-4 w-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Field label="Téléphone">
+                <input className={inputCls} value={data.telephone} onChange={e => upd("telephone", e.target.value)} placeholder="+242 06 000 0000" />
               </Field>
               <Field label="Adresse">
-                <input className={inputCls} value={data.adresse} onChange={e=>upd("adresse", e.target.value)} placeholder="Rue, n°, complément" />
+                <input className={inputCls} value={data.adresse} onChange={e => upd("adresse", e.target.value)} />
               </Field>
               <Field label="Quartier">
-                <input className={inputCls} value={data.quartier} onChange={e=>upd("quartier", e.target.value)} placeholder="Ex : Talangaï" />
+                <input className={inputCls} value={data.quartier} onChange={e => upd("quartier", e.target.value)} />
+              </Field>
+              <Field label="N° dossier">
+                <input className={inputCls} value={data.numero_dossier ?? ""} onChange={e => upd("numero_dossier", e.target.value)} placeholder="D-0001" />
               </Field>
             </div>
           </Card>
         )}
 
-        {/* Étape 3 : Infos civiles */}
+        {/* État civil & Proche */}
         {step === 2 && (
-          <Card title="Informations civiles" icon={<MapPin className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-              <Field label="Nationalité">
-                <input className={inputCls} value={data.nationalite} onChange={e=>upd("nationalite", e.target.value)} />
-              </Field>
-              <Field label="Profession">
-                <input className={inputCls} value={data.profession} onChange={e=>upd("profession", e.target.value)} />
-              </Field>
+          <Card title="État civil & Proche" icon={<Briefcase className="h-4 w-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Statut matrimonial">
-                <select className={inputCls} value={data.statut_matrimonial} onChange={e=>upd("statut_matrimonial", e.target.value as any)}>
+                <select className={inputCls} value={data.statut_matrimonial} onChange={e => upd("statut_matrimonial", e.target.value as any)}>
                   <option value="">—</option>
                   <option value="celibataire">Célibataire</option>
                   <option value="marie">Marié(e)</option>
@@ -264,92 +338,71 @@ export default function PatientFormPro() {
                   <option value="divorce">Divorcé(e)</option>
                 </select>
               </Field>
-              <Field label="Groupe sanguin">
-                <select className={inputCls} value={data.groupe_sanguin} onChange={e=>upd("groupe_sanguin", e.target.value as any)}>
-                  <option value="">—</option>
-                  {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(g=> <option key={g} value={g}>{g}</option>)}
-                </select>
-              </Field>
-            </div>
-          </Card>
-        )}
-
-        {/* Étape 4 : Proche & Assurance */}
-        {step === 3 && (
-          <Card title="Personne à contacter & Assurance" icon={<Shield className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Proche à prévenir">
-                <input className={inputCls} value={data.proche_nom} onChange={e=>upd("proche_nom", e.target.value)} placeholder="Nom complet" />
+              <Field label="Nom du proche">
+                <input className={inputCls} value={data.proche_nom} onChange={e => upd("proche_nom", e.target.value)} />
               </Field>
               <Field label="Téléphone du proche">
-                <input className={inputCls} value={data.proche_tel} onChange={e=>upd("proche_tel", telMask(e.target.value))} placeholder="+242 06 000 0000" />
+                <input className={inputCls} value={data.proche_tel} onChange={e => upd("proche_tel", e.target.value)} />
               </Field>
             </div>
+          </Card>
+        )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-              <Field label="Assurance (ID)">
-                <input className={inputCls} value={data.assurance_id} onChange={e=>upd("assurance_id", e.target.value)} placeholder="UUID assurance (optionnel)" />
-              </Field>
-              <Field label="Numéro d’assuré">
-                <input className={inputCls} value={data.numero_assure} onChange={e=>upd("numero_assure", e.target.value)} placeholder="N° de police" />
-              </Field>
-              <Field label="Statut">
-                <select className={inputCls} value={data.is_active ? "actif" : "inactif"} onChange={e=>upd("is_active", e.target.value === "actif")}>
-                  <option value="actif">Actif</option>
-                  <option value="inactif">Inactif</option>
+        {/* Infos médicales */}
+        {step === 3 && (
+          <Card title="Informations médicales" icon={<FileText className="h-4 w-4" />}>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Field label="Groupe sanguin">
+                <select className={inputCls} value={data.groupe_sanguin} onChange={e => upd("groupe_sanguin", e.target.value as any)}>
+                  <option value="">—</option>
+                  <option value="A+">A+</option><option value="A-">A-</option>
+                  <option value="B+">B+</option><option value="B-">B-</option>
+                  <option value="AB+">AB+</option><option value="AB-">AB-</option>
+                  <option value="O+">O+</option><option value="O-">O-</option>
                 </select>
               </Field>
+              <Field label="Allergies">
+                <input className={inputCls} value={data.allergies} onChange={e => upd("allergies", e.target.value)} placeholder="Aucune / Pénicilline / …" />
+              </Field>
+              <Field label="Assurance (ID)">
+                <input className={inputCls} value={data.assurance_id ?? ""} onChange={e => upd("assurance_id", e.target.value)} />
+              </Field>
+              <Field label="Numéro assuré">
+                <input className={inputCls} value={data.numero_assure ?? ""} onChange={e => upd("numero_assure", e.target.value)} />
+              </Field>
             </div>
           </Card>
         )}
 
-        {/* Étape 5 : Allergies & Récap */}
-        {step === 4 && (
-          <Card title="Allergies & Récapitulatif" icon={<Syringe className="h-4 w-4" />}>
-            <Field label="Allergies" className="sm:col-span-2">
-              <textarea rows={4} className={inputCls} value={data.allergies} onChange={e=>upd("allergies", e.target.value)} placeholder="Ex : pénicilline, arachide…" />
-            </Field>
-
-            <div className="mt-4 rounded-xl border border-ink-100 bg-ink-50 p-4 text-sm">
-              <div className="font-semibold text-ink-800 mb-1">Récapitulatif</div>
-              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-ink-700">
-                <li><b>Nom:</b> {data.nom || "—"} {data.prenom || ""}</li>
-                <li><b>Âge:</b> {ageAffiche || "—"}</li>
-                <li><b>Sexe:</b> {data.sexe}</li>
-                <li><b>Tél:</b> {data.telephone || "—"}</li>
-                <li><b>Adresse:</b> {data.adresse || "—"} ({data.quartier || "—"})</li>
-                <li><b>Groupe sanguin:</b> {data.groupe_sanguin || "—"}</li>
-              </ul>
-              <p className="mt-2 text-ink-600 text-xs">
-                Le <b>numéro de dossier</b> sera généré automatiquement côté serveur.
-              </p>
-            </div>
-          </Card>
-        )}
-
-        {/* Actions navigation */}
+        {/* Actions */}
         <div className="sticky bottom-4 z-10">
           <div className="rounded-xl bg-white/90 backdrop-blur border border-ink-100 shadow p-3 flex items-center justify-between">
-            <div className="text-xs text-ink-600">
-              Étape <b>{step + 1}</b> / {steps.length}
-            </div>
+            <div className="text-xs text-ink-600">Étape <b>{step + 1}</b> / {steps.length}</div>
             <div className="flex items-center gap-2">
               {step > 0 && (
-                <button type="button" className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50" onClick={prev}>
+                <button
+                  type="button"
+                  className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
+                  onClick={prev}
+                >
                   Précédent
                 </button>
               )}
               {step < steps.length - 1 ? (
-                <button type="button" className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30" onClick={next}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                  onClick={next}
+                >
                   Suivant <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
                 <button
                   type="submit"
                   disabled={busy}
-                  className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30 disabled:opacity-60"
+                  className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
                 >
-                  {busy ? "Enregistrement…" : "Enregistrer le patient"}
+                  {busy ? "Enregistrement…" : (isEdit ? "Mettre à jour" : "Enregistrer")}
                 </button>
               )}
             </div>
@@ -360,33 +413,23 @@ export default function PatientFormPro() {
   );
 }
 
-/* ------------------- UI helpers ------------------- */
+/* ---------------- UI helpers ---------------- */
 
 function Card({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode; }) {
   return (
     <section className="rounded-2xl border border-ink-100 bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center gap-2">
-        {icon}
-        <h3 className="text-sm font-semibold">{title}</h3>
-      </div>
+      <div className="mb-4 flex items-center gap-2">{icon}<h3 className="text-sm font-semibold">{title}</h3></div>
       {children}
     </section>
   );
 }
-
-function Field({ label, required, icon, className, children }: { label: string; required?: boolean; icon?: React.ReactNode; className?: string; children: React.ReactNode; }) {
+function Field({ label, required, className, children }: { label: string; required?: boolean; className?: string; children: React.ReactNode; }) {
   return (
     <div className={className}>
-      <label className="block text-xs font-medium text-ink-600">
-        {label} {required && <span className="text-congo-red">*</span>}
-      </label>
-      <div className="relative">
-        {icon && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">{icon}</span>}
-        {children}
-      </div>
+      <label className="block text-xs font-medium text-ink-600">{label} {required && <span className="text-congo-red">*</span>}</label>
+      {children}
     </div>
   );
 }
-
 const inputCls =
   "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";

@@ -27,6 +27,18 @@ function getRoleNames(user: AnyObj): string[] {
     .filter(Boolean)
     .map((s: string) => s.toLowerCase());
 }
+function getPermNames(user: AnyObj): Set<string> {
+  const pools = [user?.permissions, user?.perms, user?.abilities, user?.scopes].filter(Boolean);
+  const names = pools.flatMap((arr: any[]) =>
+    (Array.isArray(arr) ? arr : []).map((p: any) => (typeof p === "string" ? p : p?.name)).filter(Boolean)
+  );
+  return new Set(names);
+}
+function isAdminish(user: AnyObj) {
+  const roles = getRoleNames(user);
+  const perms = getPermNames(user);
+  return roles.includes("admin") || roles.includes("dg") || perms.has("*");
+}
 
 /* --------- mapping service -> route front ---------- */
 const SERVICE_NAME_TO_SLUG: Record<string, string> = {
@@ -67,119 +79,69 @@ function serviceSlugToPath(slug?: string | null): string | null {
   return `/${slug}`;
 }
 
-/* ----- Tiles statiques (admin voit tout, autres n’entrent plus ici) ----- */
+/* ----- Tiles (admin voit tout, autres n’entrent plus ici) ----- */
 type Tile = { slug: string; label: string; desc: string; href: string };
 const SERVICE_TILES: Tile[] = [
-  { slug: "reception",          label: "Accueil / Réception",              desc: "Orientation & accueil",         href: "/reception" },
-  { slug: "consultations",    label: "Consultations",                    desc: "Consultations médicales",       href: "/consultations" },
-  { slug: "medecine",         label: "Médecine Générale",                desc: "Consultations",                 href: "/medecine" },
-  { slug: "aru",              label: "Accueil & Urgences (ARU)",         desc: "Triage & urgences",             href: "/aru" },
-  { slug: "laboratoire",      label: "Laboratoire",                       desc: "Analyses & résultats",          href: "/laboratoire" },
-  { slug: "pharmacie",        label: "Pharmacie",                         desc: "Dispensation & stock",          href: "/pharmacie" },
-  { slug: "finance",          label: "Caisse / Finance",                  desc: "Encaissement & reçus",          href: "/caisse" },
-  { slug: "logistique",       label: "Logistique",                        desc: "Ressources & équipements",      href: "/logistique" },
-  { slug: "pansement",        label: "Pansement",                         desc: "Soins locaux & suivi",          href: "/pansements" },
-  { slug: "kinesitherapie",   label: "Kinésithérapie",                    desc: "Rééducation",                   href: "/kinesitherapie" },
-  { slug: "gestion-malade",   label: "Gestion des Malades",               desc: "Hospitalisation & lits",        href: "/gestion-malade" },
-  { slug: "sanitaire",        label: "Programme Sanitaire",               desc: "VIH / Tuberculose",             href: "/sanitaire" },
-  { slug: "gynecologie",      label: "Gynécologie",                       desc: "Suivi & soins",                 href: "/gynecologie" },
-  { slug: "maternite",        label: "Maternité",                         desc: "Suivi & accouchements",         href: "/maternite" },
-  { slug: "pediatrie",        label: "Pédiatrie",                         desc: "Soins de l’enfant",             href: "/pediatrie" },
-  { slug: "smi",              label: "SMI (Santé Mère & Enfant)",         desc: "Suivi mère & enfant",           href: "/smi" },
-  { slug: "bloc-operatoire",  label: "Bloc Opératoire",                   desc: "Actes & planning",              href: "/bloc-operatoire" },
-  { slug: "statistiques",     label: "Statistiques / Dashboard",          desc: "Indicateurs clés",              href: "/statistiques" },
-  { slug: "pourcentage",      label: "Répartition des Pourcentages",      desc: "Paramétrage & parts",           href: "/pourcentage" },
-  { slug: "personnel",        label: "Gestion du Personnel",              desc: "Ressources humaines",           href: "/personnels" },
+  { slug: "reception", label: "Accueil / Réception", desc: "Orientation & accueil", href: "/reception" },
+  { slug: "consultations", label: "Consultations", desc: "Consultations médicales", href: "/consultations" },
+  { slug: "medecine", label: "Médecine Générale", desc: "Consultations", href: "/medecine" },
+  { slug: "aru", label: "Accueil & Urgences (ARU)", desc: "Triage & urgences", href: "/aru" },
+  { slug: "laboratoire", label: "Laboratoire", desc: "Analyses & résultats", href: "/laboratoire" },
+  { slug: "pharmacie", label: "Pharmacie", desc: "Dispensation & stock", href: "/pharmacie" },
+  { slug: "finance", label: "Caisse / Finance", desc: "Encaissement & reçus", href: "/caisse" },
+  { slug: "logistique", label: "Logistique", desc: "Ressources & équipements", href: "/logistique" },
+  { slug: "pansement", label: "Pansement", desc: "Soins locaux & suivi", href: "/pansements" },
+  { slug: "kinesitherapie", label: "Kinésithérapie", desc: "Rééducation", href: "/kinesitherapie" },
+  { slug: "gestion-malade", label: "Gestion des Malades", desc: "Hospitalisation & lits", href: "/gestion-malade" },
+  { slug: "sanitaire", label: "Programme Sanitaire", desc: "VIH / Tuberculose", href: "/sanitaire" },
+  { slug: "gynecologie", label: "Gynécologie", desc: "Suivi & soins", href: "/gynecologie" },
+  { slug: "maternite", label: "Maternité", desc: "Suivi & accouchements", href: "/maternite" },
+  { slug: "pediatrie", label: "Pédiatrie", desc: "Soins de l’enfant", href: "/pediatrie" },
+  { slug: "smi", label: "SMI (Santé Mère & Enfant)", desc: "Suivi mère & enfant", href: "/smi" },
+  { slug: "bloc-operatoire", label: "Bloc Opératoire", desc: "Actes & planning", href: "/bloc-operatoire" },
+  { slug: "statistiques", label: "Statistiques / Dashboard", desc: "Indicateurs clés", href: "/statistiques" },
+  { slug: "pourcentage", label: "Répartition des Pourcentages", desc: "Paramétrage & parts", href: "/pourcentage" },
+  { slug: "personnel", label: "Gestion du Personnel", desc: "Ressources humaines", href: "/personnels" },
 ];
 
 export default function PortailAdmin() {
   const [ready, setReady] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
 
-  // Garde stricte : admin/DG uniquement. Sinon, redirection vers son service.
+  // Garde stricte : admin/DG/* uniquement. Sinon, redirection ferme.
   useEffect(() => {
     const token = sessionStorage.getItem("auth:token");
-    if (!token) {
-      window.location.replace("/login?next=/portail");
-      return;
-    }
     const u = getSessionUser();
-    if (!u) {
+
+    // Pas de session → login
+    if (!token || !u) {
       window.location.replace("/login?next=/portail");
       return;
     }
 
-    const roles = getRoleNames(u);
-    const admin = roles.includes("admin") || roles.includes("dg");
-    if (!admin) {
-      // rediriger vers le service de l’utilisateur
-      let slug =
-        u?.personnel?.service?.slug ||
-        SERVICE_NAME_TO_SLUG[u?.personnel?.service?.name as string];
-
-      if (!slug) {
-        for (const r of roles) {
-          if (ROLE_TO_SLUG[r]) { slug = ROLE_TO_SLUG[r]; break; }
-        }
-      }
-      const path = serviceSlugToPath(slug) || "/login?next=/portail";
-      window.location.replace(path);
+    // Admin/DG ou super-permission ?
+    if (isAdminish(u)) {
+      setReady(true);
       return;
     }
 
-    setIsAdmin(true);
-    setReady(true);
+    // Non-admin → tente de le rediriger vers SON service
+    const roles = getRoleNames(u);
+
+    let slug =
+      u?.personnel?.service?.slug ||
+      SERVICE_NAME_TO_SLUG[u?.personnel?.service?.name as string];
+
+    if (!slug) {
+      for (const r of roles) {
+        if (ROLE_TO_SLUG[r]) { slug = ROLE_TO_SLUG[r]; break; }
+      }
+    }
+
+    const path = serviceSlugToPath(slug) || "/login?error=forbidden";
+    window.location.replace(path);
   }, []);
 
-  // Révélation au scroll (fiable, sans laisser d’éléments invisibles)
-  useEffect(() => {
-    if (!ready) return;
-    const raf = requestAnimationFrame(() => {
-      const els = Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]"));
-      els.forEach((el) => {
-        // état caché initial (une seule fois)
-        if (!el.dataset.revealInit) {
-          el.classList.add("opacity-0", "translate-y-2");
-          el.dataset.revealInit = "1";
-        }
-      });
-
-      const io = new IntersectionObserver((entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) {
-            e.target.classList.remove("opacity-0", "translate-y-2");
-            e.target.classList.add("opacity-100", "translate-y-0");
-            (e.target as HTMLElement).dataset.revealed = "1";
-            io.unobserve(e.target);
-          }
-        });
-      }, { threshold: 0.12 });
-
-      els.forEach((el) => {
-        if (el.dataset.revealed === "1") return;
-        io.observe(el);
-      });
-
-      // Fallback sécurité
-      const fallback = setTimeout(() => {
-        els.forEach((el) => {
-          if (el.dataset.revealed === "1") return;
-          el.classList.remove("opacity-0", "translate-y-2");
-          el.classList.add("opacity-100", "translate-y-0");
-          el.dataset.revealed = "1";
-        });
-      }, 800);
-
-      return () => {
-        clearTimeout(fallback);
-        io.disconnect();
-      };
-    });
-
-    return () => cancelAnimationFrame(raf);
-  }, [ready]);
-
-  if (!ready || !isAdmin) return null; // on ne rend rien le temps de la garde
+  if (!ready) return null; // rien tant que la garde n’a pas dit OK
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
@@ -213,7 +175,7 @@ export default function PortailAdmin() {
   );
 }
 
-/* ---------- sous-composants (design inchangé) ---------- */
+/* ---------- sous-composants (inchangés) ---------- */
 
 function KpiRow() {
   const items = [
@@ -225,8 +187,8 @@ function KpiRow() {
   return (
     <section className="grid grid-cols-1 sm:grid-cols-3 gap-4" role="region" aria-label="Indicateurs clés">
       {items.map((k, i) => (
-        <div key={k.label} data-reveal style={{ transitionDelay: `${80 * i}ms` }}
-          className="opacity-0 translate-y-2 transition-all duration-700 rounded-2xl border border-ink-100 bg-white p-4 shadow-sm">
+        <div key={k.label}
+          className="transition-all duration-700 rounded-2xl border border-ink-100 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-3">
             <div className={
               "h-10 w-10 rounded-xl flex items-center justify-center " +
@@ -263,9 +225,9 @@ function QuickActions() {
     <section aria-labelledby="actions-rapides">
       <h3 id="actions-rapides" className="text-sm font-semibold text-ink-700 mb-3">Actions rapides</h3>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {actions.map((a, i) => (
-          <Link key={a.href} href={a.href} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
-            className={"opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm hover:shadow focus:outline-none focus:ring-2 " +
+        {actions.map((a) => (
+          <Link key={a.href} href={a.href}
+            className={"rounded-xl border bg-white p-4 shadow-sm hover:shadow focus:outline-none focus:ring-2 " +
               (a.tone === "green" ? "border-congo-green/20 focus:ring-congo-green/30" : "border-congo-yellow/30 focus:ring-congo-yellow/40")}>
             <div className="text-ink-900 font-medium">{a.label}</div>
             <div className="text-xs text-ink-500">{a.desc}</div>
@@ -288,9 +250,9 @@ function ServicesGrid() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {tiles.map((s, i) => (
-          <Link key={s.slug} href={s.href} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
-            className="opacity-0 translate-y-2 transition-all duration-700 group relative rounded-2xl border border-ink-100 bg-white p-5 shadow-sm hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-congo-green"
+        {tiles.map((s) => (
+          <Link key={s.slug} href={s.href}
+            className="group relative rounded-2xl border border-ink-100 bg-white p-5 shadow-sm hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-congo-green"
             aria-label={`Accéder au service ${s.label}`}>
             <span className="absolute inset-x-0 -top-px h-1 rounded-t-2xl bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
             <div className="text-ink-900 font-semibold group-hover:text-congo-green">{s.label}</div>
@@ -313,9 +275,9 @@ function Announcements() {
   return (
     <section aria-labelledby="annonces" className="space-y-3">
       <h3 id="annonces" className="text-sm font-semibold text-ink-700">Annonces</h3>
-      {items.map((n, i) => (
-        <div key={n.title} data-reveal style={{ transitionDelay: `${70 * i}ms` }}
-          className={"opacity-0 translate-y-2 transition-all duration-700 rounded-xl border bg-white p-4 shadow-sm " +
+      {items.map((n) => (
+        <div key={n.title}
+          className={"rounded-xl border bg-white p-4 shadow-sm " +
             (n.color === "yellow" ? "border-congo-yellow/30" : n.color === "red" ? "border-congo-red/30" : "border-congo-green/25")}>
           <div className="text-sm font-medium text-ink-900">{n.title}</div>
           <p className="text-xs text-ink-700 mt-1">{n.body}</p>

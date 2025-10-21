@@ -442,3 +442,123 @@ export async function updateLaboratoire(id: string, payload: Partial<Laboratoire
 export async function deleteLaboratoire(id: string) {
   return apiFetch(`/laboratoire/${id}`, { method: "DELETE" });
 }
+
+
+
+/* ================== Examens ================== */
+
+export type ExamenDTO = {
+  id: string;
+  patient_id: string;
+  service_slug?: string | null;   // ex: "laboratoire"
+  demande_par?: number | null;    // personnels.id (si renvoyé)
+  valide_par?: number | null;     // personnels.id (si renvoyé)
+
+  type_origine: "interne" | "externe";
+  prescripteur_externe?: string | null;
+  reference_demande?: string | null;
+
+  code_examen: string;
+  nom_examen: string;
+  prelevement?: string | null;
+
+  statut: "en_attente" | "en_cours" | "termine" | "valide";
+
+  valeur_resultat?: string | null;
+  unite?: string | null;
+  intervalle_reference?: string | null;
+  resultat_json?: any | null;
+
+  prix?: number | null;
+  devise?: string | null;
+  facture_id?: string | null;
+
+  date_demande?: string | null;     // ISO
+  date_validation?: string | null;  // ISO
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // relations éventuelles renvoyées par l'API
+  patient?: { id: string; nom: string; prenom: string; numero_dossier?: string } | null;
+};
+
+export async function listExamensPaginated(params: { page?: number; per_page?: number; search?: string } = {}) {
+  const { page = 1, per_page = 15, search = "" } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (search?.trim()) qp.set("search", search.trim());
+  return apiFetch(`/examens?${qp.toString()}`, { method: "GET" });
+}
+
+export async function createExamen(payload: Partial<ExamenDTO>) {
+  return apiFetch(`/examens`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getExamen(id: string) {
+  return apiFetch(`/examens/${id}`, { method: "GET" });
+}
+
+export async function updateExamen(id: string, payload: Partial<ExamenDTO>) {
+  return apiFetch(`/examens/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteExamen(id: string) {
+  return apiFetch(`/examens/${id}`, { method: "DELETE" });
+}
+
+
+/* ------------ Tarifs (slug) ------------ */
+export type Tarif = {
+  id: string;
+  code: string;
+  libelle: string;
+  montant: number | string;
+  devise?: string | null;
+  is_active?: boolean | null;
+  service_slug?: string | null;            // ✅ slug
+  service?: { slug?: string; name: string } | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+// Helpers locaux pour cette section (utilisent ton apiFetch)
+async function _apiGet(path: string, params?: Record<string, any>) {
+  const qp = new URLSearchParams();
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && String(v).trim() !== "") qp.set(k, String(v));
+    }
+  }
+  const qs = qp.toString();
+  return apiFetch(`${path}${qs ? `?${qs}` : ""}`, { method: "GET" });
+}
+async function _apiSend(path: string, method: "POST"|"PUT"|"PATCH"|"DELETE", body?: any) {
+  return apiFetch(path, { method, body: body != null ? JSON.stringify(body) : undefined });
+}
+
+export async function listTarifsPaginated(params: { page?: number; per_page?: number; search?: string; service?: string } = {}) {
+  const { page = 1, per_page = 15, search = "", service = "" } = params;
+  return _apiGet("/tarifs", {
+    page,
+    per_page,
+    limit: per_page,
+    ...(search.trim() ? { search: search.trim(), q: search.trim() } : {}),
+    ...(service.trim() ? { service: service.trim() } : {}),   // ✅ filtre par slug
+  });
+}
+export async function getTarif(id: string) {
+  return _apiGet(`/tarifs/${id}`);
+}
+export async function createTarif(payload: {
+  code: string; libelle: string; montant: number; devise?: string; is_active?: boolean; service_slug?: string | null;
+}) {
+  return _apiSend("/tarifs", "POST", payload);
+}
+export async function updateTarif(id: string, payload: {
+  code?: string; libelle?: string; montant?: number; devise?: string; is_active?: boolean; service_slug?: string | null;
+}) {
+  return _apiSend(`/tarifs/${id}`, "PUT", payload);
+}
+export async function deleteTarif(id: string) {
+  return _apiSend(`/tarifs/${id}`, "DELETE");
+}

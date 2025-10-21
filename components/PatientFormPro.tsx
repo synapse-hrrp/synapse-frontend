@@ -3,18 +3,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  getPatient,
-  createPatient,
-  updatePatient,
-} from "@/lib/api";
+import { getPatient, createPatient, updatePatient } from "@/lib/api";
 import { Check, ChevronRight, User, MapPin, Phone, Briefcase, FileText } from "lucide-react";
 
 /* ---------------- Types ---------------- */
 
 type Props = {
-  patientId?: string;           // si présent => mode édition
-  afterSavePath?: string;       // où rediriger après sauvegarde
+  /** si présent => mode édition (et on charge depuis l'API sauf si initialData fourni) */
+  patientId?: string;
+  /** si fourni, on évite un fetch et on préremplit directement */
+  initialData?: any;
+  /** où rediriger après sauvegarde */
+  afterSavePath?: string;
 };
 
 type PatientPayload = {
@@ -23,7 +23,7 @@ type PatientPayload = {
   prenom: string;
   date_naissance: string;                 // "YYYY-MM-DD" | ""
   lieu_naissance: string;
-  age_reporte?: string;                   // texte libre (converti si besoin)
+  age_reporte?: string;                   // texte/nombre (libre)
   sexe: "M" | "F" | "X";
   nationalite: string;
   profession: string;
@@ -53,25 +53,20 @@ type PatientPayload = {
   is_active: boolean;
 };
 
-type PatientFromApi = PatientPayload & {
-  id?: string;
-};
-
 const steps = [
-  { key: "identite", label: "Identité", icon: User },
-  { key: "contact", label: "Contact & Adresse", icon: Phone },
-  { key: "etatcivil", label: "État civil & Proche", icon: Briefcase },
-  { key: "medical", label: "Infos médicales", icon: FileText },
+  { key: "identite",  label: "Identité",               icon: User },
+  { key: "contact",   label: "Contact & Adresse",      icon: Phone },
+  { key: "etatcivil", label: "État civil & Proche",    icon: Briefcase },
+  { key: "medical",   label: "Infos médicales",        icon: FileText },
 ] as const;
 
 /* ---------------- Helpers ---------------- */
 
-function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
-  const out: any = {};
-  for (const [k, v] of Object.entries(obj)) {
-    out[k] = v === "" || v === undefined ? null : v;
-  }
-  return out;
+function onlyDatePart(v?: string | null): string {
+  if (!v) return "";
+  // accepte "YYYY-MM-DD" ou timestamp "YYYY-MM-DDTHH:mm:ss..."
+  const m = String(v).match(/^\d{4}-\d{2}-\d{2}/);
+  return m ? m[0] : "";
 }
 
 function normalizeFromApi(raw: any): PatientPayload {
@@ -79,9 +74,9 @@ function normalizeFromApi(raw: any): PatientPayload {
   return {
     nom: it.nom ?? "",
     prenom: it.prenom ?? "",
-    date_naissance: it.date_naissance ?? "",
+    date_naissance: onlyDatePart(it.date_naissance),
     lieu_naissance: it.lieu_naissance ?? "",
-    age_reporte: it.age_reporte ?? "",
+    age_reporte: it.age_reporte != null ? String(it.age_reporte) : "",
     sexe: (it.sexe ?? "X") as "M" | "F" | "X",
     nationalite: it.nationalite ?? "",
     profession: it.profession ?? "",
@@ -100,43 +95,44 @@ function normalizeFromApi(raw: any): PatientPayload {
   };
 }
 
+function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
+  const out: any = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = v === "" || v === undefined ? null : v;
+  }
+  return out;
+}
+
 /* ---------------- Component ---------------- */
 
-export default function PatientFormPro({ patientId, afterSavePath = "/reception/patients" }: Props) {
+export default function PatientFormPro({
+  patientId,
+  initialData,
+  afterSavePath = "/reception/patients",
+}: Props) {
   const router = useRouter();
   const isEdit = Boolean(patientId);
 
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(isEdit);
+  const [loading, setLoading] = useState(isEdit && !initialData);
   const [error, setError] = useState<string | null>(null);
 
-  const [data, setData] = useState<PatientPayload>({
-    nom: "",
-    prenom: "",
-    date_naissance: "",
-    lieu_naissance: "",
-    age_reporte: "",
-    sexe: "X",
-    nationalite: "",
-    profession: "",
-    adresse: "",
-    quartier: "",
-    telephone: "",
-    statut_matrimonial: "",
-    proche_nom: "",
-    proche_tel: "",
-    groupe_sanguin: "",
-    allergies: "",
-    assurance_id: "",
-    numero_assure: "",
-    numero_dossier: "",
-    is_active: true,
-  });
+  const [data, setData] = useState<PatientPayload>(() =>
+    initialData ? normalizeFromApi(initialData) : {
+      nom: "", prenom: "", date_naissance: "", lieu_naissance: "", age_reporte: "",
+      sexe: "X", nationalite: "", profession: "",
+      adresse: "", quartier: "", telephone: "",
+      statut_matrimonial: "", proche_nom: "", proche_tel: "",
+      groupe_sanguin: "", allergies: "",
+      assurance_id: "", numero_assure: "", numero_dossier: "",
+      is_active: true,
+    }
+  );
 
-  // Charger données existantes si édition
+  // Charger depuis l'API en édition si pas d'initialData
   useEffect(() => {
-    if (!isEdit || !patientId) return;
+    if (!isEdit || !patientId || initialData) return;
     let abo = false;
     (async () => {
       try {
@@ -152,7 +148,7 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
       }
     })();
     return () => { abo = true; };
-  }, [isEdit, patientId]);
+  }, [isEdit, patientId, initialData]);
 
   function upd<K extends keyof PatientPayload>(k: K, v: PatientPayload[K]) {
     setData((d) => ({ ...d, [k]: v }));
@@ -170,8 +166,8 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
   }, [data.date_naissance, data.age_reporte]);
 
   const progress = ((step + 1) / steps.length) * 100;
-  function next() { if (step < steps.length - 1) setStep(step + 1); }
-  function prev() { if (step > 0) setStep(step - 1); }
+  const next = () => setStep(s => Math.min(steps.length - 1, s + 1));
+  const prev = () => setStep(s => Math.max(0, s - 1));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -179,14 +175,11 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
     setError(null);
 
     try {
-      // Nettoyage : convertir les vides en null (selon back)
+      // Nettoyage : strings vides -> null (Laravel)
       const payload = nullifyEmpty({ ...data });
 
-      if (isEdit && patientId) {
-        await updatePatient(patientId, payload);
-      } else {
-        await createPatient(payload);
-      }
+      if (isEdit && patientId) await updatePatient(patientId, payload);
+      else await createPatient(payload);
 
       router.replace(afterSavePath);
     } catch (e: any) {
@@ -224,12 +217,10 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
                                  : done ? "text-ink-700 hover:bg-ink-50"
                                         : "text-ink-500 hover:bg-ink-50"}`}
                     >
-                      <span
-                        className={`h-5 w-5 rounded-md flex items-center justify-center
-                          ${active ? "bg-congo-green text-white"
-                                   : done ? "bg-ink-200 text-ink-800"
-                                          : "bg-ink-100 text-ink-600"}`}
-                      >
+                      <span className={`h-5 w-5 rounded-md flex items-center justify-center
+                        ${active ? "bg-congo-green text-white"
+                                 : done ? "bg-ink-200 text-ink-800"
+                                        : "bg-ink-100 text-ink-600"}`}>
                         {done ? <Check className="h-3 w-3" /> : <Icon className="h-3.5 w-3.5" />}
                       </span>
                       {s.label}
@@ -266,13 +257,13 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
           <Card title="Identité" icon={<User className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Nom" required>
-                <input className={inputCls} value={data.nom} onChange={e => upd("nom", e.target.value.toUpperCase())} placeholder="NGOMA" />
+                <input className={inputCls} value={data.nom} onChange={e => upd("nom", e.target.value.toUpperCase())} placeholder="NGOMA" required />
               </Field>
               <Field label="Prénom" required>
-                <input className={inputCls} value={data.prenom} onChange={e => upd("prenom", e.target.value)} placeholder="Pierre" />
+                <input className={inputCls} value={data.prenom} onChange={e => upd("prenom", e.target.value)} placeholder="Pierre" required />
               </Field>
               <Field label="Sexe" required>
-                <select className={inputCls} value={data.sexe} onChange={e => upd("sexe", e.target.value as any)}>
+                <select className={inputCls} value={data.sexe} onChange={e => upd("sexe", e.target.value as any)} required>
                   <option value="M">M</option>
                   <option value="F">F</option>
                   <option value="X">X</option>
@@ -380,34 +371,24 @@ export default function PatientFormPro({ patientId, afterSavePath = "/reception/
             <div className="text-xs text-ink-600">Étape <b>{step + 1}</b> / {steps.length}</div>
             <div className="flex items-center gap-2">
               {step > 0 && (
-                <button
-                  type="button"
-                  className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
-                  onClick={prev}
-                >
+                <button type="button" className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50" onClick={prev}>
                   Précédent
                 </button>
               )}
               {step < steps.length - 1 ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
-                  onClick={next}
-                >
+                <button type="button" className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700" onClick={next}>
                   Suivant <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
-                >
+                <button type="submit" disabled={busy} className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">
                   {busy ? "Enregistrement…" : (isEdit ? "Mettre à jour" : "Enregistrer")}
                 </button>
               )}
             </div>
           </div>
         </div>
+
+        {error && <p className="text-sm text-congo-red">{error}</p>}
       </section>
     </form>
   );
@@ -426,7 +407,9 @@ function Card({ title, icon, children }: { title: string; icon?: React.ReactNode
 function Field({ label, required, className, children }: { label: string; required?: boolean; className?: string; children: React.ReactNode; }) {
   return (
     <div className={className}>
-      <label className="block text-xs font-medium text-ink-600">{label} {required && <span className="text-congo-red">*</span>}</label>
+      <label className="block text-xs font-medium text-ink-600">
+        {label} {required && <span className="text-congo-red">*</span>}
+      </label>
       {children}
     </div>
   );

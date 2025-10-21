@@ -1,22 +1,30 @@
+// app/tarifs/new/page.tsx
 "use client";
+
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
-import LaboratoireFormPro from "@/components/LaboratoireFormPro";
+import TarifFormPro from "@/components/TarifFormPro";
 
-export default function NewLaboratoirePage() {
+export default function NewTarifPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
       <TopIdentityBar />
-      <SiteHeader title="Nouvel examen labo" subtitle="Prescrire un test et (optionnel) saisir un résultat" logoSrc="/logo-hospital.png" avatarSrc="/Gloire.png" />
+      <SiteHeader
+        title="Nouveau tarif"
+        subtitle="Créer un tarif"
+        logoSrc="/logo-hospital.png"
+        avatarSrc="/Gloire.png"
+      />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <nav className="mb-6 text-sm text-ink-600">
           <ol className="flex items-center gap-2">
-            <li>Portail</li><li aria-hidden>/</li><li>Laboratoire</li><li aria-hidden>/</li>
-            <li className="font-medium text-ink-900">Nouvel examen</li>
+            <li>Portail</li><li aria-hidden>/</li>
+            <li>Tarifs</li><li aria-hidden>/</li>
+            <li className="font-medium text-ink-900">Nouveau</li>
           </ol>
         </nav>
-        <LaboratoireFormPro />
+        <TarifFormPro />
       </main>
       <SiteFooter />
     </div>

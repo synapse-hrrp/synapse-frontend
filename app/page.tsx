@@ -27,7 +27,7 @@ export default function SplashPage() {
       {/* Contenu centré */}
       <div className="relative z-10 flex flex-col items-center">
         <img
-          src="/logo.svg"
+          src="/hopital.png"
           alt="Synapse Santé"
           className="w-24 h-24 md:w-28 md:h-28 rounded-xl bg-white/10 p-3 ring-1 ring-white/20 shadow-lg"
         />

@@ -1,7 +1,7 @@
 // app/personnels/[id]/edit/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import TopIdentityBar from "@/components/TopIdentityBar";
@@ -14,6 +14,11 @@ import {
   updatePersonnel,
   listAllServices,
   listUsersPaginated,
+  // ↓↓↓ ajoutés pour l’upload (avatar/extra)
+  uploadPersonnelAvatar,
+  uploadPersonnelExtra,      // optionnel si tu as la route côté back
+  deletePersonnelAvatar,
+  deletePersonnelExtra,      // optionnel si tu as la route côté back
 } from "@/lib/api";
 import {
   ArrowLeft,
@@ -68,6 +73,13 @@ function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
 }
 function telMask(v: string) {
   return v.replace(/[^\d+ ]/g, "");
+}
+// URL publique (pour afficher /storage/xxx.jpg)
+const API_BASE_PUBLIC = process.env.NEXT_PUBLIC_API_BASE || "";
+function publicUrlMaybe(path: string) {
+  if (!path) return "";
+  if (path.startsWith("http") || path.startsWith("blob:") || path.startsWith("data:")) return path;
+  return `${API_BASE_PUBLIC.replace(/\/+$/, "")}${path}`;
 }
 
 /* ---------------- Page ---------------- */
@@ -543,24 +555,71 @@ export default function PersonnelEditPage() {
               {/* Avatar & Extra */}
               {step === 3 && (
                 <Card title="Avatar & Extra" icon={<Building2 className="h-4 w-4" />}>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <Field label="Avatar (chemin relatif)">
-                      <input
-                        className={inputCls}
-                        value={data.avatar_path}
-                        onChange={(e) => upd("avatar_path", e.target.value)}
-                        placeholder="/storage/avatars/123.jpg"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    {/* AVATAR */}
+                    <div className="space-y-2">
+                      <ImagePickerGeneric
+                        label="Avatar (importer / caméra)"
+                        currentPath={data.avatar_path || ""}
+                        setPath={(p) => upd("avatar_path", p)}
+                        onUpload={async (file) => {
+                          // envoie vers /admin/personnels/{id}/avatar
+                          const path = await uploadPersonnelAvatar(id, file);
+                          return path; // ex: "/storage/avatars/xxx.jpg"
+                        }}
+                        onDelete={async () => { await deletePersonnelAvatar(id); }}
                       />
-                    </Field>
-                    <Field label="Extra (JSON)">
-                      <textarea
-                        rows={4}
-                        className={inputCls}
-                        value={data.extra}
-                        onChange={(e) => upd("extra", e.target.value)}
-                        placeholder='{"badge":"or"}'
+                      <Field label="Chemin avatar (lecture seule)">
+                        <input className={inputCls} value={data.avatar_path} readOnly />
+                      </Field>
+                    </div>
+
+                    {/* EXTRA : image optionnelle + JSON */}
+                    <div className="space-y-2">
+                      <ImagePickerGeneric
+                        label="Extra (photo/fichier optionnel)"
+                        currentPath={(() => {
+                          try {
+                            const j = data.extra ? JSON.parse(data.extra) : null;
+                            return j?.extra_path ?? "";
+                          } catch {
+                            return "";
+                          }
+                        })()}
+                        setPath={(p) => {
+                          // on stocke extra comme JSON avec un champ extra_path
+                          const obj = (() => {
+                            try { return data.extra ? JSON.parse(data.extra) : {}; } catch { return {}; }
+                          })();
+                          obj.extra_path = p;
+                          upd("extra", JSON.stringify(obj));
+                        }}
+                        onUpload={async (file) => {
+                          // si tu as /admin/personnels/{id}/extra côté Laravel :
+                          // const path = await uploadPersonnelExtra(id, file); return path;
+
+                          // sinon provisoire : réutilise l’endpoint avatar
+                          const path = await uploadPersonnelAvatar(id, file);
+                          return path;
+                        }}
+                        // onDelete={async () => { await deletePersonnelExtra(id); }} // décommente si tu as la route
                       />
-                    </Field>
+
+                      <Field label="Extra (JSON)">
+                        <textarea
+                          rows={4}
+                          className={inputCls}
+                          value={data.extra}
+                          onChange={(e) => upd("extra", e.target.value)}
+                          placeholder='{"badge":"or","extra_path":"/storage/extras/xxx.jpg"}'
+                        />
+                      </Field>
+
+                      <div className="text-xs text-ink-500">
+                        🔒 Aucun enregistrement automatique. Téléverse pour obtenir un chemin,
+                        puis clique sur <b>“Enregistrer les modifications”</b> pour sauvegarder la fiche.
+                      </div>
+                    </div>
                   </div>
                 </Card>
               )}
@@ -571,6 +630,7 @@ export default function PersonnelEditPage() {
                   <div className="text-xs text-ink-600">
                     Étape <b>{step + 1}</b> / {steps.length}
                   </div>
+
                   <div className="flex items-center gap-2">
                     {step > 0 && (
                       <button
@@ -581,7 +641,9 @@ export default function PersonnelEditPage() {
                         Précédent
                       </button>
                     )}
+
                     {step < steps.length - 1 ? (
+                      // 🟢 Étapes intermédiaires : juste passer à la suivante
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
@@ -590,17 +652,20 @@ export default function PersonnelEditPage() {
                         Suivant <ChevronRight className="h-4 w-4" />
                       </button>
                     ) : (
+                      // ✅ Dernière étape : enregistrement manuel (pas de "submit" auto)
                       <button
-                        type="submit"
+                        type="button"
                         disabled={busy}
+                        onClick={handleSubmit}
                         className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
                       >
-                        {busy ? "Enregistrement…" : "Enregistrer les modifications"}
+                        {busy ? "Enregistrement…" : "Enregistrer"}
                       </button>
                     )}
                   </div>
                 </div>
               </div>
+
             </section>
           </form>
         )}
@@ -653,3 +718,180 @@ function Field({
 }
 const inputCls =
   "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";
+
+/* ---------------- Image Picker (import + caméra) ---------------- */
+function ImagePickerGeneric({
+  label,
+  currentPath,
+  setPath,
+  onUpload,
+  onDelete,
+}: {
+  label: string;
+  currentPath: string;
+  setPath: (p: string) => void;
+  onUpload: (file: File) => Promise<string>;
+  onDelete?: () => Promise<void>;
+}) {
+  const [preview, setPreview] = useState<string>(currentPath || "");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showCam, setShowCam] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => { setPreview(currentPath || ""); }, [currentPath]);
+
+  useEffect(() => {
+    // stop cam au démontage
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setShowCam(true);
+    } catch {
+      alert("Impossible d'accéder à la caméra.");
+    }
+  }
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setShowCam(false);
+  }
+  function captureFrame() {
+    if (!videoRef.current) return;
+    const v = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
+    canvas.getContext("2d")!.drawImage(v, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const f = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+      setFile(f);
+      setPreview(URL.createObjectURL(blob));
+    }, "image/jpeg", 0.92);
+  }
+
+  async function handleUpload() {
+    if (!file) {
+      alert("Choisis une image (ou prends une photo) d'abord.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const path = await onUpload(file);
+      setPath(path);
+      alert("Fichier téléversé. La fiche n'est PAS encore enregistrée — clique sur “Enregistrer les modifications”.");
+    } catch {
+      alert("Échec du téléversement.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium text-ink-600">{label}</div>
+
+      {(preview || currentPath) ? (
+        <img
+          src={publicUrlMaybe(preview || currentPath)}
+          alt="preview"
+          className="h-32 w-32 object-cover rounded-lg border border-ink-100"
+        />
+      ) : (
+        <div className="h-32 w-32 grid place-items-center rounded-lg border border-dashed border-ink-200 text-ink-400 text-xs">
+          Aucune image
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50 cursor-pointer">
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment" // mobile → ouvre la caméra
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setFile(f);
+              setPreview(URL.createObjectURL(f));
+            }}
+          />
+          Importer / Prendre (mobile)
+        </label>
+
+        <button
+          type="button"
+          className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
+          onClick={startCamera}
+        >
+          Prendre une photo (caméra)
+        </button>
+
+        <button
+          type="button"
+          className="rounded-lg bg-congo-green px-3 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-60"
+          onClick={handleUpload}
+          disabled={busy}
+        >
+          {busy ? "Téléversement..." : "Téléverser maintenant"}
+        </button>
+
+        {onDelete && currentPath ? (
+          <button
+            type="button"
+            className="rounded-lg border border-red-200 text-red-700 bg-white px-3 py-2 text-sm hover:bg-red-50"
+            onClick={async () => {
+              if (!confirm("Supprimer l'image actuelle ?")) return;
+              try { await onDelete(); setPath(""); setPreview(""); } catch { alert("Suppression échouée."); }
+            }}
+          >
+            Supprimer
+          </button>
+        ) : null}
+      </div>
+
+      {/* Modal caméra */}
+      {showCam && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm grid place-items-center z-50">
+          <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3">
+            <video ref={videoRef} className="w-full rounded-lg bg-black" />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
+                onClick={stopCamera}
+              >
+                Fermer
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-congo-green px-3 py-2 text-sm text-white hover:bg-green-700"
+                onClick={() => { captureFrame(); stopCamera(); }}
+              >
+                Capturer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

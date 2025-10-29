@@ -1,7 +1,14 @@
 // lib/api.ts
 import { setAuthSession, clearAuthSession } from "@/lib/authz"; // ou "./authz" si pas d'alias
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8080/api/v1";
+/* ================= Base & helpers ================= */
+const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE || "http://192.168.1.196:8000/api/v1";
+const API_BASE = API_BASE_RAW.replace(/\/+$/, ""); // retire les / finaux
+
+function join(base: string, path: string) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${p}`;
+}
 
 /* ------------ Helpers session ------------ */
 export type LoginPayload =
@@ -13,38 +20,72 @@ export function getToken() {
   return sessionStorage.getItem("auth:token");
 }
 
-// ❌ on n'utilise plus setSession/clearSession : remplacés par setAuthSession/clearAuthSession
-
-// Fetch commun avec protection contre la redirection HTML vers /login
+/* =============== Fetch commun (FIX headers) =============== */
+// Protection contre redirection HTML /login + fusion de headers sûre
+// lib/api.ts
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const token = typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
+  const token =
+    typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-    cache: "no-store",
-    redirect: "follow",
+  const isFormData = options.body instanceof FormData;
+
+  // Construit des headers "safe"
+  const headers = new Headers({
+    Accept: "application/json",
+    // ❗️ NE PAS fixer Content-Type si FormData (fetch ajoute le boundary)
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
   });
 
-  // Si Laravel renvoie une page HTML de /login, on la traite comme 401
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  // Fusionne les headers passés par l’appelant (en les laissant override)
+  if (options.headers) {
+    const extra = new Headers(options.headers as HeadersInit);
+    extra.forEach((v, k) => headers.set(k, v));
+  }
+
+  // Si on nous a passé un objet JS (pas FormData, pas string), on JSON.stringify
+  let body = options.body as any;
+  if (body && !isFormData && typeof body === "object" && !(body instanceof Blob)) {
+    body = JSON.stringify(body);
+  }
+
+  const res = await fetch(join(API_BASE, path), {
+    ...options,
+    headers,
+    body,
+    cache: "no-store",
+    redirect: "follow",
+    // Si tu utilises Sanctum + cookies: active aussi credentials
+    // credentials: "include",
+  });
+
+  // Si Laravel renvoie une page HTML /login, traite comme 401
   const finalURL = res.url || "";
   const ct = res.headers.get("content-type") || "";
   if (res.redirected && finalURL.includes("/login")) {
     throw new Error("401 Unauthorized - redirected to login");
   }
 
+  const rawText = await res.text().catch(() => "");
+  const tryJson = () => {
+    try { return rawText ? JSON.parse(rawText) : null; } catch { return null; }
+  };
+
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText} - ${text}`);
+    const data = tryJson();
+    const msg =
+      (data && (data.message || data.error)) ||
+      `${res.status} ${res.statusText}`;
+    const err: any = new Error(msg);
+    err.status = res.status;
+    err.payload = data || rawText;
+    throw err;
   }
 
-  return ct.includes("application/json") ? res.json() : (await res.text());
+  return ct.includes("application/json") ? (rawText ? JSON.parse(rawText) : null) : rawText;
 }
+
 
 /* ------------ Auth ------------ */
 export async function login(payload: LoginPayload) {
@@ -109,7 +150,6 @@ export async function updatePatient(id: string, payload: any) {
 export async function deletePatient(id: string) {
   return apiFetch(`/patients/${id}`, { method: "DELETE" });
 }
-
 
 /* ------------ Personnels (routes admin) ------------ */
 /** NB: le back expose /api/v1/admin/personnels (role:admin) */
@@ -217,7 +257,6 @@ export async function deletePersonnel(id: string | number) {
   return apiFetch(`/admin/personnels/${id}`, { method: "DELETE" });
 }
 
-
 /* ------------ Users (routes admin) ------------ */
 /** NB: le back expose /api/v1/admin/users (role:admin) */
 export type UserDTO = {
@@ -260,39 +299,6 @@ export async function deleteUser(id: string | number) {
   return apiFetch(`/admin/users/${id}`, { method: "DELETE" });
 }
 
-
-/* ------------ Visites ------------ */
-export type VisiteDTO = {
-  id: string | number;
-  patient_id: string;          // UUID du patient
-  service_id: number;          // ID du service
-  plaintes_motif: string;
-  created_at?: string;
-  updated_at?: string;
-  // si le back renvoie les relations
-  patient?: { id: string; nom: string; prenom: string; numero_dossier?: string } | null;
-  service?: { id: number; name: string; slug?: string } | null;
-};
-
-export async function listVisitesPaginated(params: { page?: number; per_page?: number; search?: string } = {}) {
-  const { page = 1, per_page = 15, search = "" } = params;
-  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
-  if (search.trim()) qp.set("search", search.trim());
-  return apiFetch(`/visites?${qp.toString()}`, { method: "GET" });
-}
-export async function createVisite(payload: { patient_id: string; service_id: number; plaintes_motif: string }) {
-  return apiFetch("/visites", { method: "POST", body: JSON.stringify(payload) });
-}
-export async function getVisite(id: string | number) {
-  return apiFetch(`/visites/${id}`, { method: "GET" });
-}
-export async function updateVisite(id: string | number, payload: Partial<Pick<VisiteDTO,"patient_id"|"service_id"|"plaintes_motif">>) {
-  return apiFetch(`/visites/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-export async function deleteVisite(id: string | number) {
-  return apiFetch(`/visites/${id}`, { method: "DELETE" });
-}
-
 /* ------------ Services (UNIQUE) ------------ */
 export type ServiceDTO = {
   id: number;
@@ -301,17 +307,41 @@ export type ServiceDTO = {
   is_active?: boolean;
 };
 
-export async function listAllServices(params: { search?: string } = {}) {
-  const { search = "" } = params;
-  const qp = new URLSearchParams();
-  if (search.trim()) qp.set("search", search.trim());
-  const qs = qp.toString();
-  return apiFetch(`/services${qs ? `?${qs}` : ""}`, { method: "GET" });
+// ⬇️ Renvoie *toutes* les pages (corrige le problème des 16 éléments)
+export async function listAllServices(params: { search?: string; per_page?: number } = {}) {
+  const { search = "", per_page = 500 } = params; // tu peux augmenter si besoin
+  const all: ServiceDTO[] = [];
+  let page = 1;
+
+  while (true) {
+    const res: any = await listServicesPaginated({ page, per_page, search });
+    const arr: ServiceDTO[] = Array.isArray(res?.data)
+      ? res.data
+      : Array.isArray(res)
+      ? res
+      : [];
+
+    all.push(...arr);
+
+    const meta = res?.meta;
+    const cur  = meta?.current_page ?? page;
+    const last = meta?.last_page;
+
+    if (last) {
+      if (cur >= last) break;      // pagination classique Laravel
+    } else {
+      if (arr.length < per_page) break; // fallback si pas de meta
+    }
+
+    page++;
+    if (page > 1000) break; // garde-fou
+  }
+
+  return all;
 }
 
 // Alias rétro-compatibilité (pour VisiteFormPro qui importe listServices)
 export const listServices = listAllServices;
-
 
 function qs(obj: Record<string, string>) {
   const u = new URLSearchParams(obj);
@@ -320,14 +350,18 @@ function qs(obj: Record<string, string>) {
 
 export async function listServicesPaginated(params: { page?: number; per_page?: number; search?: string } = {}) {
   const { page = 1, per_page = 15, search = "" } = params;
-  const query = qs({ page: String(page), per_page: String(per_page), ...(search.trim() ? { search: search.trim() } : {}) });
+  const query = qs({
+    page: String(page),
+    per_page: String(per_page),
+    ...(search.trim() ? { search: search.trim() } : {}),
+  });
+
   try {
     return await apiFetch(`/admin/services?${query}`, { method: "GET" });
   } catch {
     return await apiFetch(`/services?${query}`, { method: "GET" });
   }
 }
-
 
 /* ------------ Pansements (Métier) ------------ */
 export type PansementDTO = {
@@ -380,7 +414,6 @@ export async function updatePansement(id: string | number, payload: Partial<Pans
 export async function deletePansement(id: string | number) {
   return apiFetch(`/pansements/${id}`, { method: "DELETE" });
 }
-
 
 /* ------------ Laboratoire (Métier) ------------ */
 export type LaboratoireDTO = {
@@ -443,10 +476,7 @@ export async function deleteLaboratoire(id: string) {
   return apiFetch(`/laboratoire/${id}`, { method: "DELETE" });
 }
 
-
-
 /* ================== Examens ================== */
-
 export type ExamenDTO = {
   id: string;
   patient_id: string;
@@ -506,7 +536,6 @@ export async function deleteExamen(id: string) {
   return apiFetch(`/examens/${id}`, { method: "DELETE" });
 }
 
-
 /* ------------ Tarifs (slug) ------------ */
 export type Tarif = {
   id: string;
@@ -536,29 +565,710 @@ async function _apiSend(path: string, method: "POST"|"PUT"|"PATCH"|"DELETE", bod
   return apiFetch(path, { method, body: body != null ? JSON.stringify(body) : undefined });
 }
 
-export async function listTarifsPaginated(params: { page?: number; per_page?: number; search?: string; service?: string } = {}) {
-  const { page = 1, per_page = 15, search = "", service = "" } = params;
+// --- NEW: lister tous les tarifs (agrège la pagination) ---
+export async function listAllTarifs(params: {
+  search?: string;
+  service?: string;
+  only_active?: boolean | number;
+  sort?: string;
+  dir?: "asc" | "desc";
+  per_page?: number;
+  max_pages?: number;
+} = {}): Promise<Tarif[]> {
+  const {
+    search = "",
+    service = "",
+    only_active,
+    sort,
+    dir,
+    per_page = 200,
+    max_pages = 50,
+  } = params;
+
+  let page = 1;
+  const all: Tarif[] = [];
+
+  while (page <= max_pages) {
+    const resp: any = await _apiGet("/tarifs", {
+      page,
+      per_page,
+      limit: per_page,
+      ...(search.trim() ? { search: search.trim(), q: search.trim() } : {}),
+      ...(service.trim() ? { service: service.trim() } : {}),
+      ...(only_active != null ? { only_active: Number(!!only_active) } : {}),
+      ...(sort ? { sort } : {}),
+      ...(dir ? { dir } : {}),
+    });
+
+    const data: Tarif[] = Array.isArray(resp) ? (resp as Tarif[]) : (resp?.data ?? []);
+    const meta: any = Array.isArray(resp) ? null : (resp?.meta ?? null);
+
+    all.push(...data);
+
+    const noMore =
+      (!meta && data.length < per_page) ||
+      (meta?.last_page && page >= meta.last_page);
+
+    if (noMore) break;
+    page += 1;
+  }
+
+  return all;
+}
+
+// --- NEW: liste paginée des tarifs ---
+export async function listTarifsPaginated(params: {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  service?: string;
+  only_active?: boolean | number;
+  sort?: string;
+  dir?: "asc" | "desc";
+} = {}) {
+  const {
+    page = 1,
+    per_page = 15,
+    search = "",
+    service = "",
+    only_active,
+    sort,
+    dir,
+  } = params;
+
   return _apiGet("/tarifs", {
     page,
     per_page,
     limit: per_page,
     ...(search.trim() ? { search: search.trim(), q: search.trim() } : {}),
-    ...(service.trim() ? { service: service.trim() } : {}),   // ✅ filtre par slug
+    ...(service.trim() ? { service: service.trim() } : {}),
+    ...(only_active != null ? { only_active: Number(!!only_active) } : {}),
+    ...(sort ? { sort } : {}),
+    ...(dir ? { dir } : {}),
   });
 }
+
 export async function getTarif(id: string) {
   return _apiGet(`/tarifs/${id}`);
 }
+
 export async function createTarif(payload: {
   code: string; libelle: string; montant: number; devise?: string; is_active?: boolean; service_slug?: string | null;
 }) {
   return _apiSend("/tarifs", "POST", payload);
 }
+
 export async function updateTarif(id: string, payload: {
   code?: string; libelle?: string; montant?: number; devise?: string; is_active?: boolean; service_slug?: string | null;
 }) {
   return _apiSend(`/tarifs/${id}`, "PUT", payload);
 }
+
 export async function deleteTarif(id: string) {
   return _apiSend(`/tarifs/${id}`, "DELETE");
 }
+
+
+function authHeaders() {
+  try {
+    const t = typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function uploadPersonnelAvatar(personnelId: number | string, file: File) {
+  const fd = new FormData();
+  // adapte le nom si ton contrôleur attend "avatar" au lieu de "file"
+  fd.append("file", file);
+
+  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/avatar`), {
+    method: "POST",
+    headers: { ...authHeaders() }, // surtout pas de Content-Type avec FormData
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`Upload avatar failed: ${res.status} ${res.statusText}`);
+
+  const json = await res.json();
+  // Normalisation: on tente différents emplacements
+  return (json?.path ?? json?.avatar_path ?? json?.data?.avatar_path ?? "") as string;
+}
+
+export async function deletePersonnelAvatar(personnelId: number | string) {
+  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/avatar`), {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`Delete avatar failed: ${res.status} ${res.statusText}`);
+  return true;
+}
+
+// (Optionnel) si tu ajoutes les routes "extra" côté back :
+export async function uploadPersonnelExtra(personnelId: number | string, file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/extra`), {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`Upload extra failed: ${res.status} ${res.statusText}`);
+  const json = await res.json();
+  return (json?.path ?? json?.extra_path ?? json?.data?.extra_path ?? "") as string;
+}
+export async function deletePersonnelExtra(personnelId: number | string) {
+  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/extra`), {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`Delete extra failed: ${res.status} ${res.statusText}`);
+  return true;
+}
+
+
+// lib/api.ts — AJOUT UNIQUEMENT LA SECTION "Médecins" (assure-toi de n'en avoir qu'UNE)
+/* ------------ Médecins (Métier) ------------ */
+export type MedecinDTO = {
+  id: number;
+  personnel_id: number;
+  numero_ordre: string;
+  specialite: string;
+  grade?: string | null;
+  deleted_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  personnel?: {
+    id: number;
+    first_name?: string | null;
+    last_name?: string | null;
+    full_name?: string | null;
+  } | null;
+};
+
+export async function listMedecinsPaginated(params: {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  specialite?: string;
+  grade?: string;
+} = {}) {
+  const { page = 1, per_page = 15, search = "", specialite = "", grade = "" } = params;
+  const qs = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (search.trim()) qs.set("search", search.trim());
+  if (specialite.trim()) qs.set("specialite", specialite.trim());
+  if (grade.trim()) qs.set("grade", grade.trim());
+
+  return apiFetch(`/medecins?${qs.toString()}`, { method: "GET" });
+}
+
+export async function createMedecin(payload: {
+  personnel_id: number;
+  numero_ordre: string;
+  specialite: string;
+  grade?: string | null;
+}) {
+  return apiFetch("/medecins", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getMedecin(id: string | number) {
+  return apiFetch(`/medecins/${id}`, { method: "GET" });
+}
+
+export async function updateMedecin(id: string | number, payload: Partial<MedecinDTO>) {
+  return apiFetch(`/medecins/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteMedecin(id: string | number) {
+  return apiFetch(`/medecins/${id}`, { method: "DELETE" });
+}
+
+
+export async function getMedecinByPersonnel(personnelId: number | string) {
+  return apiFetch(`/medecins/by-personnel/${personnelId}`, { method: "GET" });
+}
+
+// ---------- Visites (types + CRUD) ----------
+
+export type StatutVisite = "EN_ATTENTE" | "A_ENCAISSER" | "PAYEE" | "CLOTUREE";
+
+export type VisiteDTO = {
+  id: string;                 // uuid
+  patient_id: string;         // uuid
+  service_id: number;         // bigint unsigned
+
+  medecin_id?: number | null;
+  agent_id?: number | null;
+  medecin_nom?: string | null;  // snapshots
+  agent_nom?: string | null;
+
+  heure_arrivee?: string | null;         // ISO string (ou 'YYYY-MM-DDTHH:mm')
+  plaintes_motif?: string | null;
+  hypothese_diagnostic?: string | null;
+
+  affectation_id?: string | null;        // uuid|null
+
+  tarif_id?: string | null;              // uuid|null
+  montant_prevu?: number | string | null;
+  montant_du?: number | string | null;
+  devise?: string | null;
+
+  statut: StatutVisite;
+  clos_at?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // Relations éventuelles renvoyées par l’API
+  patient?: { id: string; nom?: string; prenom?: string; numero_dossier?: string } | null;
+  service?: { id: number; name?: string; slug?: string } | null;
+};
+
+export async function listVisitesPaginated(params: {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  statut?: StatutVisite | "";
+  service_id?: number | "";
+  date_from?: string; // YYYY-MM-DD
+  date_to?: string;   // YYYY-MM-DD
+} = {}) {
+  const { page = 1, per_page = 15, search = "", statut = "", service_id = "", date_from, date_to } = params;
+  const qp = new URLSearchParams({
+    page: String(page),
+    per_page: String(per_page),
+  });
+  if (search?.trim()) qp.set("search", search.trim());
+  if (statut) qp.set("statut", statut);
+  if (service_id) qp.set("service_id", String(service_id));
+  if (date_from) qp.set("date_from", date_from);
+  if (date_to) qp.set("date_to", date_to);
+
+  return apiFetch(`/visites?${qp.toString()}`, { method: "GET" });
+}
+
+export async function createVisite(payload: Partial<VisiteDTO>) {
+  return apiFetch(`/visites`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getVisite(id: string | number) {
+  const _id = String(id);
+  return apiFetch(`/visites/${_id}`, { method: "GET" });
+}
+
+export async function updateVisite(id: string | number, payload: Partial<VisiteDTO>) {
+  const _id = String(id);
+  return apiFetch(`/visites/${_id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteVisite(id: string | number) {
+  const _id = String(id);
+  return apiFetch(`/visites/${_id}`, { method: "DELETE" });
+}
+
+
+// ============================================================
+//  Pharmacie API (Front) — s'appuie sur TON apiFetch existant
+//  ⚠️ Ne redéclare PAS apiFetch ici, on l'importe déjà ailleurs
+// ============================================================
+
+// ---------- Types ----------
+export type Dci = { id: number; name: string; description?: string | null };
+
+export type ArticleDTO = {
+  id: number;
+  code: string;
+  name: string;
+  form?: string | null;
+  dosage?: string | null;
+  unit?: string | null;
+  dci_id?: number | null;
+  dci?: { id: number; name: string } | null;
+  stock_on_hand?: number;
+  buy_price?: number | null;
+  sell_price?: number | null;
+  tax_rate?: number | null;
+  image_url?: string | null;
+};
+
+export type Paginated<T> = {
+  data: T[];
+  meta?: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
+  // compat
+  page?: number;
+  per_page?: number;
+  total?: number;
+  total_pages?: number;
+};
+
+// --- DCI API (coller tel quel) ---
+
+export type Dci = { id: number; name: string; description?: string | null };
+
+/** Options légères pour <select> — GET /pharma/dcis/options */
+export async function getDciOptions(): Promise<Array<{ id: number; name: string }>> {
+  const res: any = await apiFetch(`/pharma/dcis/options`, { method: "GET" });
+  const arr = Array.isArray(res)
+    ? res
+    : (Array.isArray(res?.data) ? res.data : []);
+  return arr.map((d: any) => ({
+    id: Number(d.id ?? d.value),
+    name: String(d.name ?? d.label ?? ""),
+  }));
+}
+
+/** Liste complète des DCIs (utilisée par certains écrans) */
+export async function getDcis(): Promise<Dci[]> {
+  const opts = await getDciOptions();
+  // on n’a que id+name via /options -> description null par défaut
+  return opts.map(o => ({ id: o.id, name: o.name, description: null }));
+}
+
+/** Alias rétro-compat : certains écrans importent encore listDcis */
+export const listDcis = getDcis;
+
+/** Lecture d’un DCI par id — GET /pharma/dcis/{id} */
+export async function getDci(id: string | number): Promise<Dci> {
+  const res: any = await apiFetch(`/pharma/dcis/${id}`, { method: "GET" });
+  if (!res || (res && res.error)) throw new Error("Erreur lors du chargement du DCI");
+
+  return {
+    id: Number(res.id),
+    name: String(res.name ?? ""),
+    description: res.description ?? null,
+  };
+}
+
+
+// (C) CRUD DCI
+export async function createDci(payload: { name: string; description?: string }): Promise<Dci> {
+  return apiFetch(`/pharma/dcis`, { method: "POST", body: JSON.stringify(payload) });
+}
+export async function updateDci(id: number | string, payload: { name?: string; description?: string }): Promise<Dci> {
+  return apiFetch(`/pharma/dcis/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+export async function deleteDci(id: number | string): Promise<void> {
+  await apiFetch(`/pharma/dcis/${id}`, { method: "DELETE" });
+}
+
+// ============================================================
+// Articles
+// ============================================================
+
+// (1) Lire un article  GET /pharma/articles/{id}
+export async function getArticle(id: string | number): Promise<ArticleDTO> {
+  const a: any = await apiFetch(`/pharma/articles/${id}`, { method: "GET" });
+  return {
+    id: Number(a.id),
+    code: String(a.code ?? ""),
+    name: String(a.name ?? ""),
+    form: a.form ?? null,
+    dosage: a.dosage ?? null,
+    unit: a.unit ?? null,
+    dci_id: a.dci_id ?? (a.dci?.id ?? null),
+    dci: a.dci ? { id: Number(a.dci.id), name: String(a.dci.name) } : null,
+    stock_on_hand: Number(a.stock_on_hand ?? a.stock ?? 0),
+    buy_price: a.buy_price != null ? Number(a.buy_price) : null,
+    sell_price: a.sell_price != null ? Number(a.sell_price) : null,
+    tax_rate: a.tax_rate != null ? Number(a.tax_rate) : null,
+    image_url: a.image_url ?? null,
+  };
+}
+
+// (2) Liste paginée  GET /pharma/articles
+export async function listArticles(params?: {
+  q?: string;
+  form?: string;
+  active?: boolean;
+  per_page?: number;
+  page?: number;
+}): Promise<Paginated<ArticleDTO>> {
+  const qp = new URLSearchParams();
+  if (params?.q) qp.set("q", params.q);
+  if (params?.form) qp.set("form", params.form);
+  if (typeof params?.active === "boolean") qp.set("active", String(params.active));
+  if (params?.per_page) qp.set("per_page", String(params.per_page));
+  if (params?.page) qp.set("page", String(params.page));
+
+  const res: any = await apiFetch(`/pharma/articles?${qp.toString()}`, { method: "GET" });
+  const arr: any[] = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+
+  const data: ArticleDTO[] = arr.map((a: any) => ({
+    id: Number(a.id),
+    code: String(a.code ?? ""),
+    name: String(a.name ?? ""),
+    form: a.form ?? null,
+    dosage: a.dosage ?? null,
+    unit: a.unit ?? null,
+    dci: a.dci ? { id: Number(a.dci.id), name: String(a.dci.name) } : null,
+    stock_on_hand: Number(a.stock_on_hand ?? 0),
+    buy_price: a.buy_price != null ? Number(a.buy_price) : null,
+    sell_price: a.sell_price != null ? Number(a.sell_price) : null,
+    tax_rate: a.tax_rate != null ? Number(a.tax_rate) : null,
+    image_url: a.image_url ?? a.image ?? null,
+  }));
+
+  return {
+    data,
+    meta: res?.meta ?? undefined,
+    page: res?.meta?.current_page,
+    per_page: res?.meta?.per_page,
+    total: res?.meta?.total,
+    total_pages: res?.meta?.last_page,
+  };
+}
+
+// (3) Articles d’une DCI  GET /pharma/dcis/{dci}/articles
+export async function listArticlesByDci(params: {
+  dci_id: number | string;
+  q?: string;
+  form?: string;
+  page?: number;
+  per_page?: number;
+}): Promise<Paginated<ArticleDTO>> {
+  const { dci_id, q, form, page = 1, per_page = 32 } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (q?.trim()) qp.set("q", q.trim());
+  if (form?.trim()) qp.set("form", form.trim());
+
+  const res: any = await apiFetch(`/pharma/dcis/${dci_id}/articles?${qp.toString()}`, { method: "GET" });
+  const arr: any[] = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+
+  const data: ArticleDTO[] = arr.map((a: any) => ({
+    id: Number(a.id),
+    code: String(a.code ?? ""),
+    name: String(a.name ?? a.label ?? "—"),
+    image_url: a.image_url ?? a.image ?? null,
+    form: a.form ?? null,
+    dosage: a.dosage ?? null,
+    unit: a.unit ?? null,
+    dci: a.dci?.id ? { id: Number(a.dci.id), name: String(a.dci.name ?? "") } : null,
+    stock_on_hand: Number(a.stock_on_hand ?? a.stock ?? a.stock_total ?? 0),
+    buy_price: a.buy_price != null ? Number(a.buy_price) : null,
+    sell_price: a.sell_price != null ? Number(a.sell_price) : null,
+    tax_rate: a.tax_rate != null ? Number(a.tax_rate) : null,
+  }));
+
+  const meta = res?.meta ?? {};
+  const pageOut = Number(meta.current_page ?? page);
+  const perOut = Number(meta.per_page ?? per_page);
+  const total = Number(meta.total ?? data.length);
+  const last = Number(meta.last_page ?? (total && perOut ? Math.max(1, Math.ceil(total / perOut)) : 1));
+
+  return { data, page: pageOut, per_page: perOut, total, total_pages: last, meta: res?.meta };
+}
+
+// (4) Créer  POST /pharma/articles
+export async function createArticle(payload: any, file?: File): Promise<ArticleDTO> {
+  const url = `/pharma/articles`;
+  if (file) {
+    const fd = new FormData();
+    Object.entries(payload || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && v !== "") fd.append(k, String(v));
+    });
+    fd.append("image", file);
+    return apiFetch(url, { method: "POST", body: fd });
+  }
+  return apiFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload ?? {}) });
+}
+
+// (5) Mettre à jour  PUT /pharma/articles/{id}
+export async function updateArticle(id: string | number, payload: any, file?: File): Promise<ArticleDTO> {
+  const url = `/pharma/articles/${id}`;
+  if (file) {
+    const fd = new FormData();
+    Object.entries(payload || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && v !== "") fd.append(k, String(v));
+    });
+    fd.append("image", file);
+    return apiFetch(url, { method: "PUT", body: fd });
+  }
+  return apiFetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload ?? {}) });
+}
+
+// (6) Upload image seule  POST /pharma/articles/{id}/image
+export async function uploadArticleImage(articleId: number | string, file: File) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return apiFetch(`/pharma/articles/${articleId}/image`, { method: "POST", body: fd });
+}
+
+// (7) Supprimer  DELETE /pharma/articles/{id}
+export async function deleteArticle(id: number | string): Promise<{ message: string }> {
+  return apiFetch(`/pharma/articles/${id}`, { method: "DELETE" });
+}
+
+// ============================================================
+// Stock & Lots
+// ============================================================
+export async function stockIn(payload: {
+  article_id: number;
+  quantity: number;
+  lot_id?: number;
+  lot_number?: string;
+  expires_at?: string | null; // YYYY-MM-DD
+  unit_price?: number;        // achat (optionnel)
+  sell_price?: number;        // vente (optionnel)
+  supplier?: string;
+  reference?: string;
+}) {
+  return apiFetch(`/pharma/stock/in`, { method: "POST", body: JSON.stringify(payload) });
+}
+export async function stockOut(payload: {
+  article_id: number;
+  quantity: number;
+  reason?: "sale" | "transfer" | "waste";
+  reference?: string;
+}) {
+  return apiFetch(`/pharma/stock/out`, { method: "POST", body: JSON.stringify(payload) });
+}
+export async function listLots(article_id: number, include_expired = false) {
+  const qp = new URLSearchParams({ article_id: String(article_id) });
+  if (include_expired) qp.set("include_expired", "1");
+  return apiFetch(`/pharma/lots?${qp.toString()}`, { method: "GET" });
+}
+
+// ============================================================
+// Panier (serveur)
+export type ApiCart = {
+  id: number;
+  status: "open" | "checked_out" | "cancelled";
+  total_ht: number | string;
+  total_tva: number | string;
+  total_ttc: number | string;
+  currency: string;
+  facture_id?: string | number | null; // si le back le renvoie sur checkout
+  lines: Array<{
+    id: number;
+    article_id: number;
+    quantity: number;
+    unit_price: number | string | null;
+    tax_rate: number | string | null;
+    line_ht: number | string;
+    line_tva: number | string;
+    line_ttc: number | string;
+    article?: { id: number; name: string; code: string; sell_price?: number };
+  }>;
+};
+
+const CART_STORAGE_KEY = "ph_server_cart_id";
+function getStoredCartId(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(CART_STORAGE_KEY);
+}
+function setStoredCartId(id: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CART_STORAGE_KEY, String(id));
+}
+function clearStoredCartId() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(CART_STORAGE_KEY);
+}
+
+/** Ouvre un panier "open" avec contexte (patient, visite, etc.) */
+export async function createPharmaCart(payload: {
+  visite_id?: string | null;
+  patient_id?: string | null;
+  customer_name?: string | null;
+  currency?: string | null;
+} = {}) {
+  return apiFetch(`/pharma/carts`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+/**
+ * Assure un panier **open**:
+ * - si l'ID sauvegardé pointe vers un panier non "open", on l'invalide et on recrée
+ * - on peut fournir un payload d’init pour lier patient/visite/currency dès la création
+ */
+export async function ensureCartId(init?: {
+  visite_id?: string | null;
+  patient_id?: string | null;
+  customer_name?: string | null;
+  currency?: string | null;
+}): Promise<string> {
+  const saved = getStoredCartId();
+
+  if (saved) {
+    try {
+      const cart: any = await apiFetch(`/pharma/carts/${saved}`, { method: "GET" });
+      if (cart && cart.status === "open") {
+        return saved;
+      }
+      // panier fermé ou inexistant → purge
+      clearStoredCartId();
+    } catch {
+      clearStoredCartId();
+    }
+  }
+
+  const created = await createPharmaCart(init || {});
+  const id = String(created.id);
+  setStoredCartId(id);
+  return id;
+}
+
+export async function getCart(cartId?: string) {
+  const id = cartId ?? (await ensureCartId());
+  return apiFetch(`/pharma/carts/${id}`, { method: "GET" });
+}
+
+export async function addCartLine(articleId: number, qty = 1) {
+  const id = await ensureCartId();
+  return apiFetch(`/pharma/carts/${id}/lines`, {
+    method: "POST",
+    body: JSON.stringify({ article_id: articleId, quantity: qty }),
+  });
+}
+
+export async function updateCartLine(lineId: number | string, qty: number) {
+  const id = await ensureCartId();
+  return apiFetch(`/pharma/carts/${id}/lines/${lineId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ quantity: qty }),
+  });
+}
+
+export async function deleteCartLine(lineId: number | string) {
+  const id = await ensureCartId();
+  return apiFetch(`/pharma/carts/${id}/lines/${lineId}`, { method: "DELETE" });
+}
+
+/**
+ * Checkout : déduis le stock, clôt le panier et génère la facture.
+ * On **vide** l’ID local pour éviter de réutiliser un panier fermé.
+ * La réponse devrait contenir `facture_id` (selon ton back).
+ */
+export async function checkoutCart(reference?: string) {
+  const id = await ensureCartId();
+  const res = await apiFetch(`/pharma/carts/${id}/checkout`, {
+    method: "POST",
+    body: JSON.stringify(reference ? { reference } : {}),
+  });
+  clearStoredCartId(); // le panier devient checked_out
+  return res;          // <-- garde le res pour récupérer facture_id côté front
+}
+
+/** Paiement d’une facture (étape 4 du workflow) */
+export async function payFacture(
+  factureId: string | number,
+  payload: { montant: number; mode: string; reference?: string; devise?: string }
+) {
+  return apiFetch(`/factures/${factureId}/reglements`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+
+

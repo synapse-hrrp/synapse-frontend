@@ -1,14 +1,32 @@
 // app/personnels/[id]/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { getToken, me, getPersonnel } from "@/lib/api";
-import { ArrowLeft, Pencil, IdCard, Phone, Calendar, MapPin, Briefcase, Building2, CheckCircle2, X } from "lucide-react";
+import {
+  ArrowLeft, Pencil, IdCard, Phone, Calendar, MapPin, Briefcase, Building2,
+  CheckCircle2, X, Image as ImageIcon
+} from "lucide-react";
+
+/* ---------- Helpers image ---------- */
+// même principe que sur la liste
+const API_BASE_PUBLIC = process.env.NEXT_PUBLIC_API_BASE || "";
+function publicUrlMaybe(path?: string | null) {
+  if (!path) return "";
+  const p = String(path);
+  if (p.startsWith("http") || p.startsWith("blob:") || p.startsWith("data:")) return p;
+  return `${API_BASE_PUBLIC.replace(/\/+$/, "")}${p}`;
+}
+function initialsOf(last?: string, first?: string) {
+  const a = (last || "").trim().charAt(0).toUpperCase();
+  const b = (first || "").trim().charAt(0).toUpperCase();
+  return (a || "") + (b || "");
+}
 
 export default function PersonnelDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -53,11 +71,26 @@ export default function PersonnelDetailPage() {
     })();
   }, [id]);
 
+  // URLs images
+  const avatarUrl = useMemo(() => publicUrlMaybe(p?.avatar_path), [p]);
+  const extraUrl = useMemo(() => {
+    try {
+      const ex = p?.extra ?? null;
+      const obj = typeof ex === "string" ? JSON.parse(ex) : ex;
+      return publicUrlMaybe(obj?.extra_path);
+    } catch {
+      return "";
+    }
+  }, [p]);
+
+  const displayName = p ? `${p.last_name ?? ""} ${p.first_name ?? ""}`.trim() : "";
+  const initials = initialsOf(p?.last_name, p?.first_name);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
       <TopIdentityBar />
       <SiteHeader
-        title={p ? `${p.last_name ?? ""} ${p.first_name ?? ""}`.trim() || "Détail personnel" : "Détail personnel"}
+        title={displayName || "Détail personnel"}
         subtitle={p?.matricule ? `Matricule ${p.matricule}` : "Fiche & historique"}
         logoSrc="/logo-hospital.png"
         avatarSrc="/Gloire.png"
@@ -90,6 +123,7 @@ export default function PersonnelDetailPage() {
 
         {!busy && p && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Colonne principale */}
             <section className="lg:col-span-2 space-y-6">
               <Card title="Identité" icon={<IdCard className="h-4 w-4" />}>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
@@ -119,12 +153,51 @@ export default function PersonnelDetailPage() {
               </Card>
             </section>
 
+            {/* Sidebar */}
             <aside className="space-y-6">
+              {/* Avatar + nom */}
+              <section className="rounded-2xl border border-ink-100 bg-white p-5 shadow-sm">
+                <div className="flex items-center gap-4">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={displayName || "Avatar"}
+                      className="h-20 w-20 rounded-full object-cover border border-ink-100"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="h-20 w-20 rounded-full bg-ink-200 text-ink-700 grid place-items-center text-lg font-bold">
+                      {initials || "?"}
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-base font-semibold">{displayName || "—"}</div>
+                    <div className="text-xs text-ink-600">{p?.job_title || "—"}</div>
+                    {p?.matricule && <div className="mt-1 text-xs text-ink-500">Matricule: <b>{p.matricule}</b></div>}
+                  </div>
+                </div>
+
+                {extraUrl && (
+                  <div className="mt-4">
+                    <div className="flex items-center gap-2 text-xs font-medium text-ink-600">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Fichier “extra”
+                    </div>
+                    <img
+                      src={extraUrl}
+                      alt="Extra"
+                      className="mt-2 w-full max-h-56 object-cover rounded-lg border border-ink-100"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
+              </section>
+
               <Card title="Liens & fichiers" icon={<Building2 className="h-4 w-4" />}>
                 <ul className="text-sm space-y-1">
                   <li><b>User ID :</b> {p.user_id}</li>
                   <li><b>Avatar :</b> {p.avatar_path || "—"}</li>
-                  <li><b>Extra :</b> <code className="text-xs">{p.extra ? JSON.stringify(p.extra) : "—"}</code></li>
+                  <li><b>Extra :</b> <code className="text-xs">{p.extra ? (typeof p.extra === "string" ? p.extra : JSON.stringify(p.extra)) : "—"}</code></li>
                   <li><b>Créé le :</b> {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</li>
                   <li><b>Mis à jour :</b> {p.updated_at ? new Date(p.updated_at).toLocaleString() : "—"}</li>
                 </ul>

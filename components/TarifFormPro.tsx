@@ -3,31 +3,20 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import {
-  createTarif,
-  getToken,
-  me,
-  listAllServices,
-} from "@/lib/api";
-import {
-  Check,
-  ChevronRight,
-  BadgeDollarSign,
-  Building2,
-  Tags,
-} from "lucide-react";
+import { createTarif, getToken, me, listAllServices } from "@/lib/api";
+import { Check, ChevronRight, BadgeDollarSign, Building2, Tags } from "lucide-react";
 
 /* ---------------- Types & helpers ---------------- */
 type Payload = {
   code: string;
   libelle: string;
-  montant: string;   // string d’input
+  montant: string;        // string d’input
   devise: string;
   is_active: boolean;
-  service_id: string; // dropdown
+  service_slug: string;   // ✅ on travaille en slug
 };
 
-type ServiceDTO = { id: number; slug?: string; name: string };
+type ServiceDTO = { slug: string; name: string; id?: number };
 
 const steps = [
   { key: "identite", label: "Identification", icon: Tags },
@@ -35,10 +24,8 @@ const steps = [
   { key: "liaison", label: "Service & Statut", icon: Building2 },
 ] as const;
 
-function toNumberOrNull(v: string) {
-  const n = Number(v);
-  return Number.isFinite(n) && v !== "" ? n : null;
-}
+const inputCls =
+  "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";
 
 /* ---------------- Component ---------------- */
 export default function TarifFormPro() {
@@ -59,7 +46,7 @@ export default function TarifFormPro() {
     montant: "",
     devise: "XAF",
     is_active: true,
-    service_id: "",
+    service_slug: "",    // ✅ slug (vide par défaut)
   });
 
   // listes pour dropdowns
@@ -72,9 +59,14 @@ export default function TarifFormPro() {
       try {
         setLoadingLists(true);
         const svcRes = await listAllServices();
-        const svcArr: ServiceDTO[] = Array.isArray(svcRes?.data) ? svcRes.data :
-                                     (Array.isArray(svcRes) ? svcRes : []);
-        setServices(svcArr);
+        const svcArr: ServiceDTO[] =
+          Array.isArray((svcRes as any)?.data) ? (svcRes as any).data :
+          (Array.isArray(svcRes) ? (svcRes as any) : []);
+        // On s’assure qu’on a bien slug + name
+        setServices(
+          (svcArr || [])
+            .filter(s => s && typeof s.slug === "string" && typeof s.name === "string")
+        );
       } catch {
         setServices([]);
       } finally {
@@ -99,15 +91,15 @@ export default function TarifFormPro() {
     e.preventDefault();
     setBusy(true);
     try {
-      const raw = {
-        code: data.code.trim(),
+      const payload = {
+        code: data.code.trim().toUpperCase(),
         libelle: data.libelle.trim(),
         montant: Number(data.montant),
-        devise: data.devise || "XAF",
+        devise: (data.devise || "XAF").toUpperCase(),
         is_active: Boolean(data.is_active),
-        service_id: toNumberOrNull(data.service_id),
+        service_slug: data.service_slug || null,   // ✅ on envoie le slug
       };
-      await createTarif(raw);
+      await createTarif(payload);
       router.replace("/tarifs?flash=created");
     } catch (err: any) {
       alert(
@@ -229,13 +221,13 @@ export default function TarifFormPro() {
               <Field label="Service">
                 <select
                   className={inputCls}
-                  value={data.service_id}
-                  onChange={(e) => upd("service_id", e.target.value)}
+                  value={data.service_slug}                  // ✅ slug dans l'état
+                  onChange={(e) => upd("service_slug", e.target.value)}
                   disabled={loadingLists}
                 >
                   <option value="">{loadingLists ? "Chargement..." : "— Sélectionner —"}</option>
                   {services.map(s => (
-                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                    <option key={s.slug} value={s.slug}>{s.name}</option>  
                   ))}
                 </select>
               </Field>
@@ -257,7 +249,10 @@ export default function TarifFormPro() {
         {/* Actions */}
         <div className="sticky bottom-4 z-10">
           <div className="rounded-xl bg-white/90 backdrop-blur border border-ink-100 shadow p-3 flex items-center justify-between">
-            <div className="text-xs text-ink-600">Étape <b>{step + 1}</b> / {steps.length}</div>
+            <div className="text-xs text-ink-600">
+              Étape <b>{step + 1}</b> / {steps.length}
+            </div>
+
             <div className="flex items-center gap-2">
               {step > 0 && (
                 <button
@@ -268,7 +263,9 @@ export default function TarifFormPro() {
                   Précédent
                 </button>
               )}
+
               {step < steps.length - 1 ? (
+                // 🟢 Étapes intermédiaires : juste passer à la suivante
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
@@ -277,9 +274,11 @@ export default function TarifFormPro() {
                   Suivant <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
+                // ✅ Dernière étape : enregistrement manuel (pas de "submit" auto)
                 <button
-                  type="submit"
+                  type="button"
                   disabled={busy}
+                  onClick={handleSubmit}
                   className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
                 >
                   {busy ? "Enregistrement…" : "Enregistrer"}
@@ -288,6 +287,7 @@ export default function TarifFormPro() {
             </div>
           </div>
         </div>
+
       </section>
     </form>
   );
@@ -310,5 +310,3 @@ function Field({ label, required, className, children }: { label: string; requir
     </div>
   );
 }
-const inputCls =
-  "mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20";

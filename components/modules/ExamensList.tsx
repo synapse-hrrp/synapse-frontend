@@ -20,6 +20,8 @@ type Row = {
   date_demande?: string|null;
   prix?: string|number|null;
   devise?: string|null;
+  facture_id?: string|null;
+  facture_numero?: string|null;
 };
 
 const PAGE_SIZE = 15;
@@ -32,12 +34,17 @@ export default function ExamensList({
   basePath?: string;
 }) {
   const { canAny } = useAuthz();
+
+  // ✅ Admin = token avec ability '*'
+  const isAdmin = canAny(["*"]);
+
   const allow = {
     list:   canAny(["examen.view"]),
     create: canAny(["examen.request.create"]),
     view:   canAny(["examen.view"]),
     edit:   canAny(["examen.result.write"]),
-    del:    canAny(["examen.result.write"]), // adapte si tu as une permission delete dédiée
+    // ❗ Supprimer réservé aux admins uniquement
+    del:    isAdmin,
   };
 
   const [q, setQ] = useState("");
@@ -128,19 +135,34 @@ export default function ExamensList({
               <Th>Examen</Th>
               <Th>Statut</Th>
               <Th>Prix</Th>
+              <Th>Facture</Th>
               <Th className="text-right pr-3">Actions</Th>
             </tr>
           </thead>
           <tbody>
             {rows.length===0 && !busy && (
-              <tr><td colSpan={8} className="p-6 text-center text-ink-500">{err || "Aucun résultat"}</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-ink-500">{err || "Aucun résultat"}</td></tr>
             )}
             {rows.map((r)=>(
               <tr key={r.id} className="border-t border-ink-100 hover:bg-ink-50/40">
                 <Td>{r.date_demande ? new Date(r.date_demande).toLocaleString() : "—"}</Td>
                 <Td className="font-medium">
-                  {r.patient ? `${r.patient.nom} ${r.patient.prenom}` : r.patient_id}
-                  {r.patient?.numero_dossier ? <span className="ml-2 text-ink-500">({r.patient.numero_dossier})</span> : null}
+                  {(() => {
+                    const n = r.patient?.nom ?? "";
+                    const p = r.patient?.prenom ?? "";
+                    const label = `${n} ${p}`.trim();
+                    if (label) {
+                      return (
+                        <>
+                          {label}
+                          {r.patient?.numero_dossier ? (
+                            <span className="ml-2 text-ink-500">({r.patient.numero_dossier})</span>
+                          ) : null}
+                        </>
+                      );
+                    }
+                    return r.patient_id || "—";
+                  })()}
                 </Td>
                 <Td>{r.service?.name ?? r.service_slug ?? "—"}</Td>
                 <Td className="font-mono">{r.code_examen || "—"}</Td>
@@ -149,11 +171,35 @@ export default function ExamensList({
                   <span className="rounded-full px-2 py-0.5 text-xs bg-ink-100">{r.statut}</span>
                 </Td>
                 <Td>{r.prix!=null ? `${r.prix} ${r.devise||""}` : "—"}</Td>
+                <Td>
+                  {r.facture_id && r.facture_numero ? (
+                    <Link
+                      href={`/factures/${r.facture_id}`}
+                      className="underline underline-offset-2 hover:no-underline"
+                      title={`Ouvrir la facture ${r.facture_numero}`}
+                    >
+                      {r.facture_numero}
+                    </Link>
+                  ) : (r.facture_numero || "—")}
+                </Td>
                 <Td className="text-right pr-3">
                   <div className="inline-flex items-center gap-1">
-                    {allow.view && <Link href={`${basePath}/${r.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>}
-                    {allow.edit && <Link href={`${basePath}/${r.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>}
-                    {allow.del  && <button onClick={()=>onDelete(r.id)} className="icon-btn text-congo-red" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button>}
+                    {allow.view && (
+                      <Link href={`${basePath}/${r.id}`} className="icon-btn" aria-label="Détail">
+                        <Eye className="h-4 w-4" />
+                      </Link>
+                    )}
+                    {allow.edit && (
+                      <Link href={`${basePath}/${r.id}/edit`} className="icon-btn" aria-label="Modifier">
+                        <Pencil className="h-4 w-4" />
+                      </Link>
+                    )}
+                    {/* 🛡️ Supprimer visible seulement si admin */}
+                    {allow.del && (
+                      <button onClick={()=>onDelete(r.id)} className="icon-btn text-congo-red" aria-label="Supprimer">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </Td>
               </tr>

@@ -49,3 +49,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+@layer utilities {
+  /* Masquer totalement la barre de défilement, mais garder le scroll actif */
+  .no-scrollbar {
+    -ms-overflow-style: none;      /* IE / Edge ancien */
+    scrollbar-width: none;         /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;                 /* Chrome / Safari / Edge (Blink/WebKit) */
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    overscroll-behavior-x: contain;  /* évite les rebonds latéraux */
+    overflow-y: hidden;              /* aucune barre verticale parasite */
+  }
+}

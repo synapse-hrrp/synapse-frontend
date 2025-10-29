@@ -26,11 +26,42 @@ type Row = {
   service_id?: number|null;
   sex?: "M"|"F"|null;
   hired_at?: string|null;
+  avatar_path?: string|null; // ← ajouté
 };
 
 type ServiceMini = { id: number; name: string };
 
 const PAGE_SIZE = 15;
+
+// Helpers URL publique pour les images
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || ""; // ex: http://127.0.0.1:8080/api/v1
+const ASSET_BASE =
+  (process.env.NEXT_PUBLIC_ASSET_BASE || RAW_API_BASE)
+    // enlève /api ou /api/vX pour retomber sur la racine du site
+    .replace(/\/api(\/v\d+)?\/?$/i, "")
+    .replace(/\/+$/, ""); // trim trailing slash
+
+function publicUrlMaybe(path?: string | null) {
+  if (!path) return "";
+  let p = String(path).trim();
+  if (!p) return "";
+
+  // si déjà absolu, on retourne tel quel
+  if (/^(https?:)?\/\//i.test(p) || p.startsWith("blob:") || p.startsWith("data:")) return p;
+
+  // normaliser le chemin relatif (ex: "storage/..." -> "/storage/...")
+  if (!p.startsWith("/")) p = "/" + p;
+
+  return `${ASSET_BASE}${p}`;
+}
+
+function initialsOf(last: string, first: string) {
+  const a = (last || "").trim().charAt(0).toUpperCase();
+  const b = (first || "").trim().charAt(0).toUpperCase();
+  return (a || "") + (b || "");
+}
+
+
 
 export default function PersonnelsListPage() {
   return (
@@ -76,7 +107,7 @@ function PersonnelsListInner() {
         const arr: ServiceMini[] = Array.isArray(raw) ? raw : (raw.data ?? raw ?? []);
         setServiceMap(new Map(arr.map(s => [s.id, s.name])));
       } catch {
-        // silencieux : on gardera l'ID si échec
+        // silencieux
       }
     })();
   }, []);
@@ -175,6 +206,7 @@ function PersonnelsListInner() {
           <table className="w-full text-sm">
             <thead className="bg-ink-50 text-ink-700">
               <tr>
+                <Th>Photo</Th>
                 <Th>Matricule</Th>
                 <Th>Nom</Th>
                 <Th>Sexe</Th>
@@ -187,26 +219,44 @@ function PersonnelsListInner() {
             </thead>
             <tbody>
               {rows.length === 0 && !busy && (
-                <tr><td colSpan={8} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>
               )}
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t border-ink-100 hover:bg-ink-50/40">
-                  <Td className="font-mono">{r.matricule}</Td>
-                  <Td className="font-medium">{r.last_name} {r.first_name}</Td>
-                  <Td>{r.sex || "—"}</Td>
-                  <Td>{r.job_title || "—"}</Td>
-                  <Td>{r.phone_alt || "—"}</Td>
-                  <Td>{r.service_id ? (serviceMap.get(r.service_id) ?? r.service_id) : "—"}</Td>
-                  <Td>{r.hired_at ? new Date(r.hired_at).toLocaleDateString() : "—"}</Td>
-                  <Td className="text-right pr-3">
-                    <div className="inline-flex items-center gap-1">
-                      <Link href={`/personnels/${r.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
-                      <Link href={`/personnels/${r.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
-                      <button onClick={() => onDelete(r.id)} className="icon-btn text-congo-red" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const url = publicUrlMaybe(r.avatar_path);
+                const initials = initialsOf(r.last_name, r.first_name);
+                return (
+                  <tr key={r.id} className="border-t border-ink-100 hover:bg-ink-50/40">
+                    <Td>
+                      {url ? (
+                        <img
+                          src={url}
+                          alt={`${r.last_name} ${r.first_name}`}
+                          className="h-10 w-10 rounded-full object-cover border border-ink-100"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-ink-200 text-ink-700 grid place-items-center text-xs font-semibold">
+                          {initials || "—"}
+                        </div>
+                      )}
+                    </Td>
+                    <Td className="font-mono">{r.matricule}</Td>
+                    <Td className="font-medium">{r.last_name} {r.first_name}</Td>
+                    <Td>{r.sex || "—"}</Td>
+                    <Td>{r.job_title || "—"}</Td>
+                    <Td>{r.phone_alt || "—"}</Td>
+                    <Td>{r.service_id ? (serviceMap.get(r.service_id) ?? r.service_id) : "—"}</Td>
+                    <Td>{r.hired_at ? new Date(r.hired_at).toLocaleDateString() : "—"}</Td>
+                    <Td className="text-right pr-3">
+                      <div className="inline-flex items-center gap-1">
+                        <Link href={`/personnels/${r.id}`} className="icon-btn" aria-label="Détail"><Eye className="h-4 w-4" /></Link>
+                        <Link href={`/personnels/${r.id}/edit`} className="icon-btn" aria-label="Modifier"><Pencil className="h-4 w-4" /></Link>
+                        <button onClick={() => onDelete(r.id)} className="icon-btn text-congo-red" aria-label="Supprimer"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    </Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

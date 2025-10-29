@@ -398,7 +398,10 @@ export default function PersonnelFormPro() {
         {/* Actions */}
         <div className="sticky bottom-4 z-10">
           <div className="rounded-xl bg-white/90 backdrop-blur border border-ink-100 shadow p-3 flex items-center justify-between">
-            <div className="text-xs text-ink-600">Étape <b>{step + 1}</b> / {steps.length}</div>
+            <div className="text-xs text-ink-600">
+              Étape <b>{step + 1}</b> / {steps.length}
+            </div>
+
             <div className="flex items-center gap-2">
               {step > 0 && (
                 <button
@@ -409,7 +412,9 @@ export default function PersonnelFormPro() {
                   Précédent
                 </button>
               )}
+
               {step < steps.length - 1 ? (
+                // 🟢 Étapes intermédiaires : juste passer à la suivante
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
@@ -418,9 +423,11 @@ export default function PersonnelFormPro() {
                   Suivant <ChevronRight className="h-4 w-4" />
                 </button>
               ) : (
+                // ✅ Dernière étape : enregistrement manuel (pas de "submit" auto)
                 <button
-                  type="submit"
+                  type="button"
                   disabled={busy}
+                  onClick={handleSubmit}
                   className="rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
                 >
                   {busy ? "Enregistrement…" : "Enregistrer"}
@@ -429,6 +436,7 @@ export default function PersonnelFormPro() {
             </div>
           </div>
         </div>
+
       </section>
     </form>
   );

@@ -215,7 +215,7 @@ function QuickActions() {
   const actions = useMemo(() => ([
     { href: "/patients",   label: "Rechercher un patient", desc: "Liste & fiches",       tone: "green" as const },
     { href: "/tarifs", label: "tarifs",    desc: "Mettre les montants",     tone: "green" as const },
-    { href: "/laboratoire",label: "Demande d’analyse",     desc: "Ordre labo & suivi",   tone: "yellow" as const },
+    { href: "/medecin",label: "Gérer les médecins",     desc: "Ordre labo & suivi",   tone: "yellow" as const },
     { href: "/caisse",     label: "Émettre un reçu",       desc: "Facturer & encaisser", tone: "green" as const },
     { href: "/users",      label: "Gérer les utilisateurs",desc: "Comptes & rôles",      tone: "yellow" as const },
     { href: "/personnels", label: "Gérer les personnels",  desc: "RH & affectations",    tone: "green"  as const },

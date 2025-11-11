@@ -678,52 +678,57 @@ function authHeaders() {
   }
 }
 
-export async function uploadPersonnelAvatar(personnelId: number | string, file: File) {
+export async function uploadPersonnelAvatar(
+  personnelId: string | number,
+  file: File
+): Promise<string> {
+  const token = getToken?.(); // si getToken existe déjà dans lib/api.ts
+  const url = `${API_BASE}/admin/personnels/${personnelId}/avatar`;
+
   const fd = new FormData();
-  // adapte le nom si ton contrôleur attend "avatar" au lieu de "file"
+  // côté Laravel, on a prévu le champ "file" (adapter si ton contrôleur attend "avatar")
   fd.append("file", file);
 
-  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/avatar`), {
+  const res = await fetch(url, {
     method: "POST",
-    headers: { ...authHeaders() }, // surtout pas de Content-Type avec FormData
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: fd,
   });
-  if (!res.ok) throw new Error(`Upload avatar failed: ${res.status} ${res.statusText}`);
 
-  const json = await res.json();
-  // Normalisation: on tente différents emplacements
-  return (json?.path ?? json?.avatar_path ?? json?.data?.avatar_path ?? "") as string;
+  if (!res.ok) {
+    throw new Error(`Upload avatar failed: ${res.status} ${res.statusText}`);
+  }
+
+  // tolérant: accepte string ou JSON { avatar_path|path|url }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const j: any = await res.json();
+    return j.avatar_path || j.path || j.url || j.data?.avatar_path || "";
+  } else {
+    const t = await res.text();
+    try {
+      const j: any = JSON.parse(t);
+      return j.avatar_path || j.path || j.url || "";
+    } catch {
+      return t; // si l'API renvoie directement le chemin en texte
+    }
+  }
 }
 
-export async function deletePersonnelAvatar(personnelId: number | string) {
-  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/avatar`), {
+export async function deletePersonnelAvatar(
+  personnelId: string | number
+): Promise<void> {
+  const token = getToken?.();
+  const url = `${API_BASE}/admin/personnels/${personnelId}/avatar`;
+
+  const res = await fetch(url, {
     method: "DELETE",
-    headers: { ...authHeaders() },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
-  if (!res.ok) throw new Error(`Delete avatar failed: ${res.status} ${res.statusText}`);
-  return true;
-}
 
-// (Optionnel) si tu ajoutes les routes "extra" côté back :
-export async function uploadPersonnelExtra(personnelId: number | string, file: File) {
-  const fd = new FormData();
-  fd.append("file", file);
-  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/extra`), {
-    method: "POST",
-    headers: { ...authHeaders() },
-    body: fd,
-  });
-  if (!res.ok) throw new Error(`Upload extra failed: ${res.status} ${res.statusText}`);
-  const json = await res.json();
-  return (json?.path ?? json?.extra_path ?? json?.data?.extra_path ?? "") as string;
-}
-export async function deletePersonnelExtra(personnelId: number | string) {
-  const res = await fetch(join(API_BASE, `/admin/personnels/${personnelId}/extra`), {
-    method: "DELETE",
-    headers: { ...authHeaders() },
-  });
-  if (!res.ok) throw new Error(`Delete extra failed: ${res.status} ${res.statusText}`);
-  return true;
+  if (!res.ok) {
+    throw new Error(`Delete avatar failed: ${res.status} ${res.statusText}`);
+  }
 }
 
 
@@ -879,6 +884,7 @@ export async function deleteVisite(id: string | number) {
 // ============================================================
 
 // ---------- Types ----------
+// lib/api.ts
 export type Dci = { id: number; name: string; description?: string | null };
 
 export type ArticleDTO = {
@@ -912,37 +918,128 @@ export type Paginated<T> = {
   total_pages?: number;
 };
 
-// --- DCI API (coller tel quel) ---
+// 👇 Assure-toi que apiFetch existe déjà dans ton projet
+declare function apiFetch(
+  url: string,
+  init?: RequestInit & { raw?: boolean }
+): Promise<any>;
 
-export type Dci = { id: number; name: string; description?: string | null };
-
-/** Options légères pour <select> — GET /pharma/dcis/options */
+/** Options légères — GET /pharma/dcis/options */
 export async function getDciOptions(): Promise<Array<{ id: number; name: string }>> {
   const res: any = await apiFetch(`/pharma/dcis/options`, { method: "GET" });
-  const arr = Array.isArray(res)
-    ? res
-    : (Array.isArray(res?.data) ? res.data : []);
+  const arr = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
   return arr.map((d: any) => ({
     id: Number(d.id ?? d.value),
     name: String(d.name ?? d.label ?? ""),
   }));
 }
 
-/** Liste complète des DCIs (utilisée par certains écrans) */
-export async function getDcis(): Promise<Dci[]> {
+/**
+ * Liste paginée avec recherche — **signature stable** pour les pages :
+ * getDcis({ q }) -> { data: Dci[] }
+ *
+ * Si tu as une vraie route /pharma/dcis qui renvoie la liste complète
+ * (avec description, pagination, etc.), dé-commente le bloc A.
+ * Sinon, on fallback sur /options (bloc B) et on re-shape vers { data: [...] }.
+ */
+// --- getDcis avec description depuis /pharma/dcis ---
+export async function getDcis(params?: { q?: string; page?: number; per_page?: number }): Promise<Paginated<Dci>> {
+  const { q = "", page, per_page } = params ?? {};
+
+  // Construit l'URL: /pharma/dcis?q=...&page=...&per_page=...
+  const search = new URLSearchParams();
+  if (q) search.set("q", q);
+  if (page) search.set("page", String(page));
+  if (per_page) search.set("per_page", String(per_page));
+  const qs = search.toString();
+  const url = `/pharma/dcis${qs ? `?${qs}` : ""}`;
+
+  const res: any = await apiFetch(url, { method: "GET" });
+
+  // Tolère plusieurs formats de backend:
+  // 1) { data: [{id,name,description}], meta: {...} }
+  // 2) [{id,name,description}]
+  // 3) { items: [...], total, page, per_page } (on re-shape en Paginated)
+  if (Array.isArray(res)) {
+    // cas #2
+    return {
+      data: res.map((d: any) => ({
+        id: Number(d.id),
+        name: String(d.name ?? ""),
+        description: d.description ?? null,
+      })),
+      meta: { current_page: 1, last_page: 1, per_page: res.length, total: res.length },
+    };
+  }
+
+  if (Array.isArray(res?.data)) {
+    // cas #1
+    return {
+      data: res.data.map((d: any) => ({
+        id: Number(d.id),
+        name: String(d.name ?? ""),
+        description: d.description ?? null,
+      })),
+      meta: res.meta ?? res.pagination ?? undefined,
+      page: res.page,
+      per_page: res.per_page,
+      total: res.total,
+      total_pages: res.total_pages,
+    };
+  }
+
+  if (Array.isArray(res?.items)) {
+    // cas #3
+    const items = res.items.map((d: any) => ({
+      id: Number(d.id),
+      name: String(d.name ?? ""),
+      description: d.description ?? null,
+    }));
+    return {
+      data: items,
+      meta: {
+        current_page: Number(res.page ?? 1),
+        last_page: Number(
+          res.total_pages ??
+          (res.per_page ? Math.max(1, Math.ceil(Number(res.total ?? items.length) / Number(res.per_page))) : 1)
+        ),
+        per_page: Number(res.per_page ?? items.length),
+        total: Number(res.total ?? items.length),
+      },
+      page: res.page,
+      per_page: res.per_page,
+      total: res.total,
+      total_pages: res.total_pages,
+    };
+  }
+
+  // Si ton backend ne renvoie pas un des formats ci-dessus, on tente de mapper au mieux
+  const raw = res ?? {};
+  const maybeList = raw.list ?? raw.rows ?? raw.results ?? [];
+  if (Array.isArray(maybeList)) {
+    return {
+      data: maybeList.map((d: any) => ({
+        id: Number(d.id),
+        name: String(d.name ?? ""),
+        description: d.description ?? null,
+      })),
+      meta: raw.meta ?? undefined,
+    };
+  }
+
+  // Dernier recours: on retombe sur /options (sans description)
   const opts = await getDciOptions();
-  // on n’a que id+name via /options -> description null par défaut
-  return opts.map(o => ({ id: o.id, name: o.name, description: null }));
+  return {
+    data: opts.map(o => ({ id: o.id, name: o.name, description: null })), // <-- pas de description dans ce cas
+    meta: { current_page: 1, last_page: 1, per_page: opts.length, total: opts.length },
+  };
 }
 
-/** Alias rétro-compat : certains écrans importent encore listDcis */
-export const listDcis = getDcis;
 
 /** Lecture d’un DCI par id — GET /pharma/dcis/{id} */
 export async function getDci(id: string | number): Promise<Dci> {
   const res: any = await apiFetch(`/pharma/dcis/${id}`, { method: "GET" });
   if (!res || (res && res.error)) throw new Error("Erreur lors du chargement du DCI");
-
   return {
     id: Number(res.id),
     name: String(res.name ?? ""),
@@ -950,8 +1047,7 @@ export async function getDci(id: string | number): Promise<Dci> {
   };
 }
 
-
-// (C) CRUD DCI
+// CRUD DCI
 export async function createDci(payload: { name: string; description?: string }): Promise<Dci> {
   return apiFetch(`/pharma/dcis`, { method: "POST", body: JSON.stringify(payload) });
 }
@@ -961,6 +1057,7 @@ export async function updateDci(id: number | string, payload: { name?: string; d
 export async function deleteDci(id: number | string): Promise<void> {
   await apiFetch(`/pharma/dcis/${id}`, { method: "DELETE" });
 }
+
 
 // ============================================================
 // Articles
@@ -1271,4 +1368,475 @@ export async function payFacture(
 }
 
 
+// === Facturation — Types légers ===
+export type FactureLigne = {
+  id: number;
+  designation?: string | null;
+  article_id?: number | null;
+  quantity: number;
+  unit_price?: number | null;
+  tax_rate?: number | null;
+  line_ht?: number | string | null;
+  line_tva?: number | string | null;
+  line_ttc?: number | string | null;
+};
+
+export type FactureDTO = {
+  id: string | number;
+  numero?: string | null;
+  status?: "draft" | "issued" | "paid" | "cancelled" | string;
+  currency?: string | null;
+  total_ht?: number | string | null;
+  total_tva?: number | string | null;
+  total_ttc?: number | string | null;
+  patient_id?: string | null;
+  visite_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  lignes?: FactureLigne[];
+};
+
+// Petit helper QS
+function _qs(obj: Record<string, any>) {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined && v !== null && String(v) !== "") u.set(k, String(v));
+  }
+  return u.toString();
+}
+
+// === Factures: liste/lecture/création ===
+export async function listFacturesPaginated(params: {
+  page?: number; per_page?: number; search?: string;
+  status?: string; date_from?: string; date_to?: string; patient_id?: string;
+} = {}) {
+  const { page = 1, per_page = 15, search = "", status, date_from, date_to, patient_id } = params;
+  const qs = _qs({ page, per_page, search, status, date_from, date_to, patient_id });
+  return apiFetch(`/factures?${qs}`, { method: "GET" }) as Promise<{
+    data: FactureDTO[], meta?: { current_page: number; last_page: number; per_page: number; total: number }
+  }>;
+}
+
+export async function getFactureFull(id: string | number) {
+  return apiFetch(`/factures/${id}`, { method: "GET" }) as Promise<FactureDTO>;
+}
+
+export async function createFactureFromVisite(payload: { visite_id: string; currency?: string }) {
+  return apiFetch(`/factures/from-visite`, { method: "POST", body: payload }) as Promise<FactureDTO>;
+}
+
+export async function createFactureLibre(payload: {
+  patient_id?: string | null;
+  currency?: string | null;
+  lignes?: Array<Pick<FactureLigne, "designation" | "article_id" | "quantity" | "unit_price" | "tax_rate">>;
+}) {
+  return apiFetch(`/factures`, { method: "POST", body: payload }) as Promise<FactureDTO>;
+}
+
+// === Lignes de facture ===
+export async function addFactureLigne(
+  factureId: string | number,
+  payload: Pick<FactureLigne, "designation" | "article_id" | "quantity" | "unit_price" | "tax_rate">
+) {
+  return apiFetch(`/factures/${factureId}/lignes`, { method: "POST", body: payload }) as Promise<FactureLigne>;
+}
+
+export async function updateFactureLigne(
+  factureId: string | number,
+  ligneId: string | number,
+  payload: Partial<Pick<FactureLigne, "designation" | "article_id" | "quantity" | "unit_price" | "tax_rate">>
+) {
+  return apiFetch(`/factures/${factureId}/lignes/${ligneId}`, { method: "PATCH", body: payload }) as Promise<FactureLigne>;
+}
+
+export async function deleteFactureLigne(factureId: string | number, ligneId: string | number) {
+  await apiFetch(`/factures/${factureId}/lignes/${ligneId}`, { method: "DELETE" });
+}
+
+// === Règlements / Caisse ===
+// Tu as déjà payFacture(factureId, { montant, mode, reference?, devise? })
+export const encaisserFacture = payFacture; // ✅ alias attendu par les pages
+
+// Sessions de caisse (endpoints probables; ajuste si besoin côté back)
+export async function openCashSession(payload: { opened_at?: string; initial_amount?: number; workstation_id?: string | number; note?: string }) {
+  return apiFetch(`/cash-sessions/open`, { method: "POST", body: payload });
+}
+export async function currentCashSession() {
+  return apiFetch(`/cash-sessions/current`, { method: "GET" });
+}
+export async function closeCashSession(payload?: { closed_at?: string; note?: string }) {
+  return apiFetch(`/cash-sessions/close`, { method: "POST", body: payload ?? {} });
+}
+
+// Poste de travail (optionnel)
+export async function getWorkstation() {
+  return apiFetch(`/workstation`, { method: "GET" });
+}
+export async function setWorkstation(payload: { name?: string; code?: string; device_id?: string }) {
+  return apiFetch(`/workstation`, { method: "POST", body: payload });
+}
+
+/* =======================================================================
+   GESTION MALADE (mouvements) — Types + CRUD + Corbeille
+   ======================================================================= */
+export type GestionMaladeDTO = {
+  id: string; // uuid
+  patient_id: string;
+  visite_id?: string | null;
+  soignant_id?: number | null;
+
+  date_acte?: string | null; // ISO
+
+  type_action: "admission" | "transfert" | "hospitalisation" | "sortie";
+
+  service_source?: string | null;
+  service_destination?: string | null;
+
+  pavillon?: string | null;
+  chambre?: string | null;
+  lit?: string | null;
+
+  date_entree?: string | null;
+  date_sortie_prevue?: string | null;
+  date_sortie_effective?: string | null;
+
+  motif?: string | null;
+  diagnostic?: string | null;
+  examen_clinique?: string | null;
+  traitements?: string | null;
+  observation?: string | null;
+
+  statut: "en_cours" | "clos" | "annule";
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // relations éventuelles
+  patient?: any;
+  visite?: any;
+  soignant?: { id: number; name: string; email?: string } | null;
+};
+
+export async function listGestionMaladePaginated(params: {
+  page?: number;
+  limit?: number; // backend attend "limit"
+  q?: string;
+  patient_id?: string;
+  statut?: GestionMaladeDTO["statut"] | "";
+  type_action?: GestionMaladeDTO["type_action"] | "";
+  sort?: "-date_acte" | "date_acte" | "created_at" | "-created_at" | "statut" | "-statut" | "type_action" | "-type_action";
+  only_trashed?: boolean;
+  with_trashed?: boolean;
+} = {}) {
+  const {
+    page = 1,
+    limit = 20,
+    q = "",
+    patient_id = "",
+    statut = "",
+    type_action = "",
+    sort = "-date_acte",
+    only_trashed = false,
+    with_trashed = false,
+  } = params;
+
+  const qp = new URLSearchParams({
+    page: String(page),
+    limit: String(Math.min(Math.max(limit, 1), 200)),
+    sort,
+  });
+  if (q.trim()) qp.set("q", q.trim());
+  if (patient_id) qp.set("patient_id", patient_id);
+  if (statut) qp.set("statut", statut);
+  if (type_action) qp.set("type_action", type_action);
+  if (only_trashed) qp.set("only_trashed", "1");
+  else if (with_trashed) qp.set("with_trashed", "1");
+
+  return apiFetch(`/gestion-malade?${qp.toString()}`, { method: "GET" });
+}
+
+export async function getGestionMalade(id: string) {
+  return apiFetch(`/gestion-malade/${id}`, { method: "GET" });
+}
+
+export async function createGestionMalade(payload: Partial<GestionMaladeDTO> & { patient_id: string }) {
+  return apiFetch(`/gestion-malade`, { method: "POST", body: payload });
+}
+
+export async function updateGestionMalade(id: string, payload: Partial<GestionMaladeDTO>) {
+  return apiFetch(`/gestion-malade/${id}`, { method: "PUT", body: payload });
+}
+
+export async function deleteGestionMalade(id: string) {
+  return apiFetch(`/gestion-malade/${id}`, { method: "DELETE" });
+}
+
+/* Corbeille / restore / suppression définitive */
+export async function listGestionMaladeTrash(params: { page?: number; limit?: number } = {}) {
+  const { page = 1, limit = 20 } = params;
+  const qp = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return apiFetch(`/gestion-malade-corbeille?${qp.toString()}`, { method: "GET" });
+}
+export async function restoreGestionMalade(id: string) {
+  return apiFetch(`/gestion-malade/${id}/restore`, { method: "POST" });
+}
+export async function forceDeleteGestionMalade(id: string) {
+  return apiFetch(`/gestion-malade/${id}/force`, { method: "DELETE" });
+}
+
+
+/* =======================================================================
+   HOSPITALISATIONS — Types + CRUD (+ via service)
+   ======================================================================= */
+export type HospitalisationDTO = {
+  id: string; // uuid
+  patient_id: string;
+  service_slug?: string | null;
+  admission_no?: string | null;
+  created_via?: "service" | "med" | "admin" | null;
+  created_by_user_id?: number | null;
+
+  // logistique
+  unite?: string | null;
+  chambre?: string | null;
+  lit?: string | null;
+  lit_id?: number | null;
+  medecin_traitant_id?: number | null;
+
+  // clinique
+  motif_admission?: string | null;
+  diagnostic_entree?: string | null;
+  diagnostic_sortie?: string | null;
+  notes?: string | null;
+  prise_en_charge_json?: any | null;
+
+  // workflow
+  statut: "en_cours" | "transfere" | "sorti" | "annule";
+  date_admission?: string | null;
+  date_sortie_prevue?: string | null;
+  date_sortie_reelle?: string | null;
+
+  // facturation
+  prix?: number | string | null;
+  devise?: string | null;
+  facture_id?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // relations éventuelles
+  patient?: any;
+  service?: any;
+  medecinTraitant?: any;
+};
+
+export async function listHospitalisationsPaginated(params: {
+  page?: number; per_page?: number;
+  patient_id?: string; service_slug?: string;
+  statut?: HospitalisationDTO["statut"] | "";
+  from?: string; to?: string; // YYYY-MM-DD
+  search?: string;
+} = {}) {
+  const { page = 1, per_page = 20, patient_id = "", service_slug = "", statut = "", from, to, search = "" } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (patient_id) qp.set("patient_id", patient_id);
+  if (service_slug) qp.set("service_slug", service_slug);
+  if (statut) qp.set("statut", statut);
+  if (from) qp.set("from", from);
+  if (to) qp.set("to", to);
+  if (search.trim()) qp.set("search", search.trim());
+
+  return apiFetch(`/hospitalisations?${qp.toString()}`, { method: "GET" });
+}
+export async function getHospitalisation(id: string) {
+  return apiFetch(`/hospitalisations/${id}`, { method: "GET" });
+}
+export async function createHospitalisation(payload: Partial<HospitalisationDTO> & { patient_id: string }) {
+  return apiFetch(`/hospitalisations`, { method: "POST", body: payload });
+}
+export async function createHospitalisationForService(service_slug: string, payload: Partial<HospitalisationDTO> & { patient_id: string }) {
+  return apiFetch(`/services/${service_slug}/hospitalisations`, { method: "POST", body: payload });
+}
+export async function updateHospitalisation(id: string, payload: Partial<HospitalisationDTO>) {
+  return apiFetch(`/hospitalisations/${id}`, { method: "PATCH", body: payload });
+}
+export async function deleteHospitalisation(id: string) {
+  return apiFetch(`/hospitalisations/${id}`, { method: "DELETE" });
+}
+export async function restoreHospitalisation(id: string) {
+  return apiFetch(`/hospitalisations/${id}/restore`, { method: "POST" });
+}
+
+
+/* =======================================================================
+   BILLETS DE SORTIE — Types + CRUD (+ via service)
+   ======================================================================= */
+export type BilletSortieDTO = {
+  id: string; // uuid
+  patient_id: string;
+  service_slug?: string | null;
+  admission_id?: string | null;
+  created_via?: "service" | "med" | "admin" | null;
+  created_by_user_id?: number | null;
+
+  motif_sortie?: string | null;
+  diagnostic_sortie?: string | null;
+  resume_clinique?: string | null;
+  consignes?: string | null;
+  traitement_sortie_json?: any | null;
+  rdv_controle_at?: string | null;
+  destination?: string | null;
+
+  prix?: number | string | null;
+  devise?: string | null;
+  facture_id?: string | null;
+
+  statut: "brouillon" | "valide" | "remis";
+  remis_a?: string | null;
+  signature_par?: string | null;
+  date_signature?: string | null;
+  date_sortie_effective?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // relations éventuelles
+  patient?: any;
+  service?: any;
+  signataire?: any;
+};
+
+export async function listBilletsSortiePaginated(params: {
+  page?: number; per_page?: number;
+  patient_id?: string; service_slug?: string;
+  statut?: BilletSortieDTO["statut"] | ""; search?: string;
+} = {}) {
+  const { page = 1, per_page = 20, patient_id = "", service_slug = "", statut = "", search = "" } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (patient_id) qp.set("patient_id", patient_id);
+  if (service_slug) qp.set("service_slug", service_slug);
+  if (statut) qp.set("statut", statut);
+  if (search.trim()) qp.set("search", search.trim());
+  return apiFetch(`/billets-de-sortie?${qp.toString()}`, { method: "GET" });
+}
+export async function getBilletSortie(id: string) {
+  return apiFetch(`/billets-de-sortie/${id}`, { method: "GET" });
+}
+export async function createBilletSortie(payload: Partial<BilletSortieDTO> & { patient_id: string }) {
+  return apiFetch(`/billets-de-sortie`, { method: "POST", body: payload });
+}
+export async function createBilletSortieForService(service_slug: string, payload: Partial<BilletSortieDTO> & { patient_id: string }) {
+  return apiFetch(`/services/${service_slug}/billets-de-sortie`, { method: "POST", body: payload });
+}
+export async function updateBilletSortie(id: string, payload: Partial<BilletSortieDTO>) {
+  return apiFetch(`/billets-de-sortie/${id}`, { method: "PATCH", body: payload });
+}
+export async function deleteBilletSortie(id: string) {
+  return apiFetch(`/billets-de-sortie/${id}`, { method: "DELETE" });
+}
+export async function restoreBilletSortie(id: string) {
+  return apiFetch(`/billets-de-sortie/${id}/restore`, { method: "POST" });
+}
+
+
+/* =======================================================================
+   DECLARATIONS DE NAISSANCE — Types + CRUD (+ via service)
+   ======================================================================= */
+export type DeclarationNaissanceDTO = {
+  id: string; // uuid
+  mere_id: string;
+  service_slug?: string | null;
+  accouchement_id?: string | null;
+  created_via?: "service" | "med" | "admin" | null;
+  created_by_user_id?: number | null;
+
+  bebe_nom?: string | null;
+  bebe_prenom?: string | null;
+  pere_nom?: string | null;
+  pere_prenom?: string | null;
+
+  date_heure_naissance?: string | null;
+  lieu_naissance?: string | null;
+  sexe?: "M" | "F" | "I" | null;
+  poids_kg?: number | string | null;
+  taille_cm?: number | string | null;
+  apgar_1?: number | null;
+  apgar_5?: number | null;
+
+  numero_acte?: string | null;
+  officier_etat_civil?: string | null;
+  documents_json?: any | null;
+
+  statut: "brouillon" | "valide" | "transmis";
+  date_transmission?: string | null;
+
+  prix?: number | string | null;
+  devise?: string | null;
+  facture_id?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // relations éventuelles
+  mere?: any;
+  service?: any;
+};
+
+export async function listDeclarationsNaissancePaginated(params: {
+  page?: number; per_page?: number;
+  mere_id?: string; service_slug?: string;
+  statut?: DeclarationNaissanceDTO["statut"] | "";
+  from?: string; to?: string; // YYYY-MM-DD
+  search?: string;
+} = {}) {
+  const { page = 1, per_page = 20, mere_id = "", service_slug = "", statut = "", from, to, search = "" } = params;
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (mere_id) qp.set("mere_id", mere_id);
+  if (service_slug) qp.set("service_slug", service_slug);
+  if (statut) qp.set("statut", statut);
+  if (from) qp.set("from", from);
+  if (to) qp.set("to", to);
+  if (search.trim()) qp.set("search", search.trim());
+  return apiFetch(`/declarations-naissance?${qp.toString()}`, { method: "GET" });
+}
+export async function getDeclarationNaissance(id: string) {
+  return apiFetch(`/declarations-naissance/${id}`, { method: "GET" });
+}
+export async function createDeclarationNaissance(payload: Partial<DeclarationNaissanceDTO> & { mere_id: string }) {
+  return apiFetch(`/declarations-naissance`, { method: "POST", body: payload });
+}
+export async function createDeclarationNaissanceForService(service_slug: string, payload: Partial<DeclarationNaissanceDTO> & { mere_id: string }) {
+  return apiFetch(`/services/${service_slug}/declarations-naissance`, { method: "POST", body: payload });
+}
+export async function updateDeclarationNaissance(id: string, payload: Partial<DeclarationNaissanceDTO>) {
+  return apiFetch(`/declarations-naissance/${id}`, { method: "PATCH", body: payload });
+}
+export async function deleteDeclarationNaissance(id: string) {
+  return apiFetch(`/declarations-naissance/${id}`, { method: "DELETE" });
+}
+export async function restoreDeclarationNaissance(id: string) {
+  return apiFetch(`/declarations-naissance/${id}/restore`, { method: "POST" });
+}
+
+
+// lib/api.ts — section Médecine (front)
+export async function listMedecinesPaginated(params: {
+  page?: number; per_page?: number;
+  q?: string; statut?: string; patient_id?: string; visite_id?: string; soignant_id?: string | number;
+  date_from?: string; date_to?: string; sort?: string;
+} = {}) {
+  const { page = 1, per_page = 15, q = "", statut = "", patient_id = "", visite_id = "", soignant_id = "", date_from, date_to, sort = "-date_acte" } = params;
+  const qp = new URLSearchParams({ page: String(page), limit: String(per_page), sort });
+  if (q.trim()) qp.set("q", q.trim());
+  if (statut) qp.set("statut", statut);
+  if (patient_id) qp.set("patient_id", patient_id);
+  if (visite_id) qp.set("visite_id", visite_id);
+  if (soignant_id !== "" && soignant_id !== null) qp.set("soignant_id", String(soignant_id));
+  if (date_from) qp.set("date_from", date_from);
+  if (date_to) qp.set("date_to", date_to);
+  return apiFetch(`/medecines?${qp.toString()}`, { method: "GET" });
+}
+export async function createMedecine(payload: any) { return apiFetch(`/medecines`, { method: "POST", body: JSON.stringify(payload) }); }
+export async function getMedecine(id: string) { return apiFetch(`/medecines/${id}`, { method: "GET" }); }
+export async function updateMedecine(id: string, payload: any) { return apiFetch(`/medecines/${id}`, { method: "PUT", body: JSON.stringify(payload) }); }
+export async function deleteMedecine(id: string) { return apiFetch(`/medecines/${id}`, { method: "DELETE" }); }
 

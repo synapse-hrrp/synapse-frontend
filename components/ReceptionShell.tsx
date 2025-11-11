@@ -103,7 +103,8 @@ export default function ReceptionShell({ children }: { children: React.ReactNode
     <ReceptionCtx.Provider value={{ caps }}>
       <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
         <TopIdentityBar />
-        <SiteHeader title="Réception" subtitle="Accueil, dossiers et admissions" logoSrc="/logo-hospital.png" avatarSrc="/Gloire.png" />
+        {/* ⬇️ avatar dynamique: on ne passe plus avatarSrc */}
+        <SiteHeader title="Réception" subtitle="Accueil, dossiers et admissions" logoSrc="/logo-hospital.png" />
 
         <main className="mx-auto max-w-7xl px-4 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

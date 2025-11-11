@@ -1,4 +1,3 @@
-// lib/authz.tsx
 "use client";
 
 import * as React from "react";
@@ -37,24 +36,19 @@ function deleteCookie(name: string) {
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
   try {
-    // clés connues
     sessionStorage.removeItem("auth:token");
     sessionStorage.removeItem("auth:user");
-    // purge large "auth:*"
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i) ?? "";
       if (k.startsWith("auth:")) sessionStorage.removeItem(k);
     }
   } catch {}
-
   try {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i) ?? "";
       if (k.startsWith("auth:")) localStorage.removeItem(k);
     }
   } catch {}
-
-  // cookies potentiels liés à l’auth (adapte si besoin)
   deleteCookie("auth_token");
   deleteCookie("auth_roles");
   deleteCookie("is_admin");
@@ -90,7 +84,6 @@ function getRoles(u: any): string[] {
 }
 
 function getAbilities(u: any, isSuper: boolean): string[] {
-  // Le back peut renvoyer abilities | permissions | perms
   const fromApi =
     pickArrayOfStrings(u?.abilities).length
       ? pickArrayOfStrings(u?.abilities)
@@ -99,7 +92,7 @@ function getAbilities(u: any, isSuper: boolean): string[] {
       : pickArrayOfStrings(u?.perms);
 
   const base = new Set(fromApi);
-  if (isSuper) base.add("*"); // admin/dg = full access
+  if (isSuper) base.add("*");
   return Array.from(base);
 }
 
@@ -217,11 +210,11 @@ export function AbilityGuard({
 
   if (!isAuthenticated) return null;
 
-  let allowed = isAdmin; // admin/dg bypass
+  let allowed = isAdmin;
   if (!allowed) {
     if (allOf && allOf.length) allowed = canAll(allOf);
     else if (anyOf && anyOf.length) allowed = canAny(anyOf);
-    else allowed = true; // aucun critère => OK
+    else allowed = true;
   }
 
   if (!allowed) {
@@ -263,13 +256,13 @@ export function RouteGuard() {
       return;
     }
 
-    // 3) /portail strict: admin/dg uniquement (bypass ACCESS_RULES)
+    // 3) /portail strict: admin/dg uniquement
     if (pathname.startsWith("/portail") && !isAdmin) {
       router.replace("/login?error=forbidden");
       return;
     }
 
-    // 4) règles custom (facultatives)
+    // 4) règles custom
     const rule = ACCESS_RULES.find((r) => r.pattern.test(pathname));
     if (!rule) return;
 

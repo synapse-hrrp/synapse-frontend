@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ClipboardList, Microscope, BarChart3, Users } from "lucide-react";
+import { Microscope, BarChart3 } from "lucide-react";
 
 import TopIdentityBar from "@/components/TopIdentityBar";
 import SiteHeader from "@/components/SiteHeader";
@@ -16,7 +16,7 @@ type Caps = {
   patients: { read: boolean };
   visites: { read: boolean };
   stats:   { view: boolean };
-  medecins: { read: true };
+  medecins: { read: boolean };
 };
 
 const LabCtx = createContext<{ caps: Caps }>({
@@ -26,7 +26,7 @@ const LabCtx = createContext<{ caps: Caps }>({
     patients: { read: false },
     visites: { read: false },
     stats:   { view: false },
-    medecins: { read: true },
+    medecins: { read: false },
   },
 });
 export const useLaboratoire = () => useContext(LabCtx);
@@ -57,7 +57,7 @@ function buildCaps(roles: string[]): Caps {
       patients: { read: true },
       visites: { read: true },
       stats:   { view: true },
-      medecins: { read: true }
+      medecins: { read: true },
     };
   }
 
@@ -66,10 +66,10 @@ function buildCaps(roles: string[]): Caps {
     return {
       isAdmin: false,
       examens: { view: true, requestCreate: true, resultWrite: true },
-      patients: { read: true }, // 👈 Nouveau : le labo peut lire les patients
-      medecins: { read: true },
+      patients: { read: true },
       visites: { read: true },
       stats:   { view: true },
+      medecins: { read: true },
     };
   }
 
@@ -79,7 +79,7 @@ function buildCaps(roles: string[]): Caps {
     patients: { read: false },
     visites: { read: false },
     stats:   { view: false },
-    medecins: { read: true },
+    medecins: { read: false },
   };
 }
 
@@ -125,7 +125,6 @@ export default function LabShell({ children }: { children: React.ReactNode }) {
           title="Laboratoire"
           subtitle="Examens, comptes-rendus et statistiques"
           logoSrc="/logo-hospital.png"
-          avatarSrc="/Gloire.png"
         />
 
         <main className="mx-auto max-w-7xl px-4 py-8">
@@ -133,6 +132,7 @@ export default function LabShell({ children }: { children: React.ReactNode }) {
             {/* Sidebar */}
             <aside className="lg:col-span-3">
               <div className="rounded-2xl border border-ink-100 bg-white shadow-sm overflow-hidden">
+                {/* bandeau */}
                 <div className="h-1 bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
                 <div className="p-3">
                   <div className="text-xs font-semibold text-ink-700 mb-2">
@@ -145,22 +145,6 @@ export default function LabShell({ children }: { children: React.ReactNode }) {
                         icon={<Microscope className="h-4 w-4" />}
                         label="Examens"
                         active={active === "examens"}
-                      />
-                    )}
-                    {caps.patients.read && (
-                      <SideItem
-                        href="/laboratoire/patients"
-                        icon={<Users className="h-4 w-4" />}
-                        label="Patients"
-                        active={active === "patients"}
-                      />
-                    )}
-                    {caps.visites.read && (
-                      <SideItem
-                        href="/laboratoire/visites"
-                        icon={<ClipboardList className="h-4 w-4" />}
-                        label="Visites"
-                        active={active === "visites"}
                       />
                     )}
                     {caps.stats.view && (
@@ -205,7 +189,7 @@ function SideItem({
       href={href}
       className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
         active
-          ? "bg-congo-greenL text-congo-green ring-1 ring-congo-green/30"
+          ? "bg-congo-green/10 text-congo-green ring-1 ring-congo-green/30"
           : "text-ink-700 hover:bg-ink-50"
       }`}
       aria-current={active ? "page" : undefined}

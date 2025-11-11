@@ -1,6 +1,4 @@
-// app/personnels/page.tsx
 "use client";
-
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -9,11 +7,7 @@ import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { listPersonnelsPaginated, deletePersonnel, listAllServices } from "@/lib/api";
 import { AdminGuard } from "@/lib/authz";
-import {
-  Search, Plus, Pencil, Trash2, Eye,
-  ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight,
-  CheckCircle2, X
-} from "lucide-react";
+import { Search, Plus, Pencil, Trash2, Eye, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, CheckCircle2, X } from "lucide-react";
 
 type Row = {
   id: number;
@@ -21,47 +15,23 @@ type Row = {
   matricule: string;
   first_name: string;
   last_name: string;
-  job_title?: string|null;
-  phone_alt?: string|null;
-  service_id?: number|null;
-  sex?: "M"|"F"|null;
-  hired_at?: string|null;
-  avatar_path?: string|null; // ← ajouté
+  job_title?: string | null;
+  phone_alt?: string | null;
+  service_id?: number | null;
+  sex?: "M" | "F" | null;
+  hired_at?: string | null;
+  avatar_path?: string | null;
+  avatar_url?: string | null; // ← ajouté
 };
 
 type ServiceMini = { id: number; name: string };
-
 const PAGE_SIZE = 15;
-
-// Helpers URL publique pour les images
-const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || ""; // ex: http://127.0.0.1:8080/api/v1
-const ASSET_BASE =
-  (process.env.NEXT_PUBLIC_ASSET_BASE || RAW_API_BASE)
-    // enlève /api ou /api/vX pour retomber sur la racine du site
-    .replace(/\/api(\/v\d+)?\/?$/i, "")
-    .replace(/\/+$/, ""); // trim trailing slash
-
-function publicUrlMaybe(path?: string | null) {
-  if (!path) return "";
-  let p = String(path).trim();
-  if (!p) return "";
-
-  // si déjà absolu, on retourne tel quel
-  if (/^(https?:)?\/\//i.test(p) || p.startsWith("blob:") || p.startsWith("data:")) return p;
-
-  // normaliser le chemin relatif (ex: "storage/..." -> "/storage/...")
-  if (!p.startsWith("/")) p = "/" + p;
-
-  return `${ASSET_BASE}${p}`;
-}
 
 function initialsOf(last: string, first: string) {
   const a = (last || "").trim().charAt(0).toUpperCase();
   const b = (first || "").trim().charAt(0).toUpperCase();
   return (a || "") + (b || "");
 }
-
-
 
 export default function PersonnelsListPage() {
   return (
@@ -74,7 +44,6 @@ export default function PersonnelsListPage() {
 function PersonnelsListInner() {
   const router = useRouter();
   const sp = useSearchParams();
-
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<Row[]>([]);
@@ -82,12 +51,9 @@ function PersonnelsListInner() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [toast, setToast] = useState<{ show: boolean; text: string }>({ show: false, text: "" });
-
   const [serviceMap, setServiceMap] = useState<Map<number, string>>(new Map());
-
   const lastPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
-  // Flash
   useEffect(() => {
     const f = sp?.get("flash");
     if (f === "created") setToast({ show: true, text: "Personnel créé avec succès." });
@@ -99,21 +65,19 @@ function PersonnelsListInner() {
     }
   }, [sp, router]);
 
-  // Charger services pour afficher leur nom
   useEffect(() => {
     (async () => {
       try {
         const raw = await listAllServices();
         const arr: ServiceMini[] = Array.isArray(raw) ? raw : (raw.data ?? raw ?? []);
         setServiceMap(new Map(arr.map(s => [s.id, s.name])));
-      } catch {
-        // silencieux
-      }
+      } catch {}
     })();
   }, []);
 
   async function load() {
-    setBusy(true); setErr(null);
+    setBusy(true);
+    setErr(null);
     try {
       const payload: any = await listPersonnelsPaginated({ page, per_page: PAGE_SIZE, search: q });
       const data: Row[] = Array.isArray(payload) ? payload : (payload.data ?? []);
@@ -122,12 +86,13 @@ function PersonnelsListInner() {
       setTotal(meta.total ?? data.length);
     } catch (e: any) {
       setErr(e?.message || "Erreur de chargement");
-      setRows([]); setTotal(0);
+      setRows([]);
+      setTotal(0);
     } finally {
       setBusy(false);
     }
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page]);
+  useEffect(() => { load(); }, [page]);
 
   function resetAndSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -154,15 +119,9 @@ function PersonnelsListInner() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
       <TopIdentityBar />
-      <SiteHeader
-        title="Personnels"
-        subtitle="Lister, rechercher et gérer le personnel"
-        logoSrc="/logo-hospital.png"
-        avatarSrc="/Gloire.png"
-      />
+      <SiteHeader title="Personnels" subtitle="Lister, rechercher et gérer le personnel" logoSrc="/logo-hospital.png" avatarSrc="/Gloire.png" />
 
       <main className="mx-auto max-w-7xl px-4 py-8 space-y-6">
-        {/* Fil d’Ariane + actions */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <nav className="text-sm text-ink-600">
             <ol className="flex items-center gap-2">
@@ -171,15 +130,11 @@ function PersonnelsListInner() {
             </ol>
           </nav>
 
-          <Link
-            href="/personnels/new"
-            className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
-          >
+          <Link href="/personnels/new" className="inline-flex items-center gap-2 rounded-lg bg-congo-green px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30">
             <Plus className="h-4 w-4" /> Nouveau
           </Link>
         </div>
 
-        {/* Barre de recherche */}
         <form onSubmit={resetAndSearch} className="rounded-xl border border-ink-100 bg-white p-3 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="relative flex-1">
@@ -191,17 +146,12 @@ function PersonnelsListInner() {
                 className="w-full rounded-lg border border-ink-100 bg-white pl-9 pr-3 py-2.5 text-sm outline-none focus:border-congo-green focus:ring-2 focus:ring-congo-green/20"
               />
             </div>
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-congo-green/20 disabled:opacity-60"
-            >
+            <button type="submit" disabled={busy} className="rounded-lg border border-ink-100 bg-white px-3 py-2.5 text-sm hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-congo-green/20 disabled:opacity-60">
               Rechercher
             </button>
           </div>
         </form>
 
-        {/* Tableau */}
         <div className="overflow-auto rounded-xl border border-ink-100 bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-ink-50 text-ink-700">
@@ -218,22 +168,15 @@ function PersonnelsListInner() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && !busy && (
-                <tr><td colSpan={9} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>
-              )}
+              {rows.length === 0 && !busy && (<tr><td colSpan={9} className="p-6 text-center text-ink-500">Aucun résultat</td></tr>)}
               {rows.map((r) => {
-                const url = publicUrlMaybe(r.avatar_path);
+                const url = r.avatar_url || "";
                 const initials = initialsOf(r.last_name, r.first_name);
                 return (
                   <tr key={r.id} className="border-t border-ink-100 hover:bg-ink-50/40">
                     <Td>
                       {url ? (
-                        <img
-                          src={url}
-                          alt={`${r.last_name} ${r.first_name}`}
-                          className="h-10 w-10 rounded-full object-cover border border-ink-100"
-                          referrerPolicy="no-referrer"
-                        />
+                        <img src={url} alt={`${r.last_name} ${r.first_name}`} className="h-10 w-10 rounded-full object-cover border border-ink-100" referrerPolicy="no-referrer" />
                       ) : (
                         <div className="h-10 w-10 rounded-full bg-ink-200 text-ink-700 grid place-items-center text-xs font-semibold">
                           {initials || "—"}
@@ -260,24 +203,9 @@ function PersonnelsListInner() {
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
-        <div className="flex items-center justify-between text-sm">
-          <div className="text-ink-600">Page {page} / {lastPage}</div>
-          <div className="flex items-center gap-1">
-            <PageBtn onClick={() => setPage(1)} disabled={page === 1}><ChevronsLeft className="h-4 w-4" /></PageBtn>
-            <PageBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}><ChevronLeft className="h-4 w-4" /></PageBtn>
-            <PageBtn onClick={() => setPage(p => Math.min(lastPage, p + 1))} disabled={page === lastPage}><ChevronRight className="h-4 w-4" /></PageBtn>
-            <PageBtn onClick={() => setPage(lastPage)} disabled={page === lastPage}><ChevronsRight className="h-4 w-4" /></PageBtn>
-          </div>
-        </div>
-
-        {err && <p className="text-sm text-congo-red">{err}</p>}
       </main>
 
       <SiteFooter />
-
-      {/* Toast */}
       <Toast show={toast.show} onClose={() => setToast({ show: false, text: "" })}>
         <CheckCircle2 className="h-5 w-5" />
         <span className="font-medium">{toast.text}</span>
@@ -293,9 +221,6 @@ function PersonnelsListInner() {
 
 function Th({ children, className="" }: any) { return <th className={`px-3 py-2 text-left font-semibold ${className}`}>{children}</th>; }
 function Td({ children, className="" }: any) { return <td className={`px-3 py-2 ${className}`}>{children}</td>; }
-function PageBtn({ children, disabled, onClick }: any) {
-  return <button disabled={disabled} onClick={onClick} className="rounded-lg border border-ink-100 bg-white px-2.5 py-1.5 hover:bg-ink-50 disabled:opacity-40">{children}</button>;
-}
 function Toast({ show, onClose, children }: { show: boolean; onClose: () => void; children: React.ReactNode }) {
   return (
     <div aria-live="polite" role="status" className={`fixed bottom-4 right-4 z-50 transition-all duration-300 ${show ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-2"}`}>

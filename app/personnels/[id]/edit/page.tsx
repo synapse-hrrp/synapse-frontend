@@ -14,11 +14,8 @@ import {
   updatePersonnel,
   listAllServices,
   listUsersPaginated,
-  // ↓↓↓ ajoutés pour l’upload (avatar/extra)
   uploadPersonnelAvatar,
-  uploadPersonnelExtra,      // optionnel si tu as la route côté back
   deletePersonnelAvatar,
-  deletePersonnelExtra,      // optionnel si tu as la route côté back
 } from "@/lib/api";
 import {
   ArrowLeft,
@@ -74,12 +71,21 @@ function nullifyEmpty<T extends Record<string, any>>(obj: T): T {
 function telMask(v: string) {
   return v.replace(/[^\d+ ]/g, "");
 }
-// URL publique (pour afficher /storage/xxx.jpg)
-const API_BASE_PUBLIC = process.env.NEXT_PUBLIC_API_BASE || "";
-function publicUrlMaybe(path: string) {
+
+// Helpers URL publiques pour les images
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
+const ASSET_BASE =
+  (process.env.NEXT_PUBLIC_ASSET_BASE || RAW_API_BASE)
+    .replace(/\/api(\/v\d+)?\/?$/i, "")
+    .replace(/\/+$/, "");
+
+function publicUrlMaybe(path?: string | null) {
   if (!path) return "";
-  if (path.startsWith("http") || path.startsWith("blob:") || path.startsWith("data:")) return path;
-  return `${API_BASE_PUBLIC.replace(/\/+$/, "")}${path}`;
+  let p = String(path).trim();
+  if (!p) return "";
+  if (/^(https?:)?\/\//i.test(p) || p.startsWith("blob:") || p.startsWith("data:")) return p;
+  if (!p.startsWith("/")) p = "/" + p;
+  return `${ASSET_BASE}${p}`;
 }
 
 /* ---------------- Page ---------------- */
@@ -559,13 +565,12 @@ export default function PersonnelEditPage() {
                     {/* AVATAR */}
                     <div className="space-y-2">
                       <ImagePickerGeneric
-                        label="Avatar (importer / caméra)"
+                        label="Avatar (importer ou caméra)"
                         currentPath={data.avatar_path || ""}
                         setPath={(p) => upd("avatar_path", p)}
                         onUpload={async (file) => {
-                          // envoie vers /admin/personnels/{id}/avatar
                           const path = await uploadPersonnelAvatar(id, file);
-                          return path; // ex: "/storage/avatars/xxx.jpg"
+                          return path; // string (ex: "/storage/avatars/xxx.jpg")
                         }}
                         onDelete={async () => { await deletePersonnelAvatar(id); }}
                       />
@@ -587,7 +592,6 @@ export default function PersonnelEditPage() {
                           }
                         })()}
                         setPath={(p) => {
-                          // on stocke extra comme JSON avec un champ extra_path
                           const obj = (() => {
                             try { return data.extra ? JSON.parse(data.extra) : {}; } catch { return {}; }
                           })();
@@ -595,14 +599,10 @@ export default function PersonnelEditPage() {
                           upd("extra", JSON.stringify(obj));
                         }}
                         onUpload={async (file) => {
-                          // si tu as /admin/personnels/{id}/extra côté Laravel :
-                          // const path = await uploadPersonnelExtra(id, file); return path;
-
-                          // sinon provisoire : réutilise l’endpoint avatar
+                          // provisoire : réutilise l’endpoint avatar
                           const path = await uploadPersonnelAvatar(id, file);
                           return path;
                         }}
-                        // onDelete={async () => { await deletePersonnelExtra(id); }} // décommente si tu as la route
                       />
 
                       <Field label="Extra (JSON)">
@@ -616,8 +616,8 @@ export default function PersonnelEditPage() {
                       </Field>
 
                       <div className="text-xs text-ink-500">
-                        🔒 Aucun enregistrement automatique. Téléverse pour obtenir un chemin,
-                        puis clique sur <b>“Enregistrer les modifications”</b> pour sauvegarder la fiche.
+                        🔒 Téléverse d’abord pour obtenir un chemin, puis clique sur
+                        <b> “Enregistrer les modifications”</b> pour sauvegarder la fiche.
                       </div>
                     </div>
                   </div>
@@ -643,7 +643,6 @@ export default function PersonnelEditPage() {
                     )}
 
                     {step < steps.length - 1 ? (
-                      // 🟢 Étapes intermédiaires : juste passer à la suivante
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg bg-congo-green px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
@@ -652,7 +651,6 @@ export default function PersonnelEditPage() {
                         Suivant <ChevronRight className="h-4 w-4" />
                       </button>
                     ) : (
-                      // ✅ Dernière étape : enregistrement manuel (pas de "submit" auto)
                       <button
                         type="button"
                         disabled={busy}
@@ -743,7 +741,6 @@ function ImagePickerGeneric({
   useEffect(() => { setPreview(currentPath || ""); }, [currentPath]);
 
   useEffect(() => {
-    // stop cam au démontage
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
@@ -789,7 +786,7 @@ function ImagePickerGeneric({
 
   async function handleUpload() {
     if (!file) {
-      alert("Choisis une image (ou prends une photo) d'abord.");
+      alert("Choisis un fichier depuis ton appareil (ou prends une photo) d'abord.");
       return;
     }
     setBusy(true);
@@ -797,8 +794,8 @@ function ImagePickerGeneric({
       const path = await onUpload(file);
       setPath(path);
       alert("Fichier téléversé. La fiche n'est PAS encore enregistrée — clique sur “Enregistrer les modifications”.");
-    } catch {
-      alert("Échec du téléversement.");
+    } catch (e: any) {
+      alert("Échec du téléversement" + (e?.message ? ` : ${e.message}` : "."));
     } finally {
       setBusy(false);
     }
@@ -821,11 +818,11 @@ function ImagePickerGeneric({
       )}
 
       <div className="flex flex-wrap gap-2">
+        {/* INPUT FICHIER — pas de 'capture' pour ne pas forcer la caméra sur desktop */}
         <label className="inline-flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50 cursor-pointer">
           <input
             type="file"
             accept="image/*"
-            capture="environment" // mobile → ouvre la caméra
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -834,9 +831,10 @@ function ImagePickerGeneric({
               setPreview(URL.createObjectURL(f));
             }}
           />
-          Importer / Prendre (mobile)
+          Importer depuis l’appareil
         </label>
 
+        {/* Bouton caméra optionnel */}
         <button
           type="button"
           className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm hover:bg-ink-50"
@@ -863,7 +861,7 @@ function ImagePickerGeneric({
               try { await onDelete(); setPath(""); setPreview(""); } catch { alert("Suppression échouée."); }
             }}
           >
-            Supprimer
+          Supprimer
           </button>
         ) : null}
       </div>

@@ -385,9 +385,15 @@ export default function PersonnelFormPro() {
         {step === 3 && (
           <Card title="Avatar & Extra" icon={<Building2 className="h-4 w-4" />}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Avatar (chemin relatif)">
-                <input className={inputCls} value={data.avatar_path} onChange={e => upd("avatar_path", e.target.value)} placeholder="/storage/avatars/123.jpg" />
+              <Field label="Avatar (chemin ou URL)">
+                <input
+                  className={inputCls}
+                  value={data.avatar_path}
+                  onChange={e => upd("avatar_path", e.target.value)}
+                  placeholder="/storage/avatars/123.jpg ou URL complète"
+                />
               </Field>
+
               <Field label="Extra (JSON)">
                 <textarea rows={4} className={inputCls} value={data.extra} onChange={e => upd("extra", e.target.value)} placeholder='{"badge":"or"}' />
               </Field>

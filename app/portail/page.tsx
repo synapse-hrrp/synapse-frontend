@@ -146,7 +146,8 @@ export default function PortailAdmin() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
       <TopIdentityBar />
-      <SiteHeader avatarSrc="/Gloire.png" />
+      {/* ⬇️ L’avatar est désormais géré automatiquement par SiteHeader (pas de prop avatarSrc) */}
+      <SiteHeader />
 
       <main className="mx-auto max-w-7xl px-4 py-8 space-y-8">
         <nav aria-label="Breadcrumb" className="text-sm text-ink-500">
@@ -186,7 +187,7 @@ function KpiRow() {
 
   return (
     <section className="grid grid-cols-1 sm:grid-cols-3 gap-4" role="region" aria-label="Indicateurs clés">
-      {items.map((k, i) => (
+      {items.map((k) => (
         <div key={k.label}
           className="transition-all duration-700 rounded-2xl border border-ink-100 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-3">

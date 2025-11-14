@@ -3,7 +3,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Mail, Phone, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 
 import TopIdentityBar from "@/components/TopIdentityBar";
@@ -37,14 +37,15 @@ const SERVICE_NAME_TO_SLUG: Record<string, string> = {
   "Gestion du Personnel": "personnel",
 };
 
-// pour deviner un service si on ne reçoit pas la relation service
 const ROLE_TO_SLUG: Record<string, string> = {
   reception: "reception",
   medecin: "consultations",
   infirmier: "pansement",
   laborantin: "laboratoire",
   pharmacien: "pharmacie",
-  caissier: "finance",
+  caissier_service: "finance",
+  caissier_general: "finance",
+  admin_caisse: "finance",
   gestionnaire: "statistiques",
 };
 
@@ -52,20 +53,22 @@ function getRoleNames(user: AnyObj): string[] {
   const raw = user?.roles ?? [];
   return raw
     .map((r: any) => (typeof r === "string" ? r : r?.name))
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((s: string) => s.toLowerCase());
 }
 function getPermNames(user: AnyObj): Set<string> {
   const pools = [user?.permissions, user?.perms, user?.abilities, user?.scopes].filter(Boolean);
   const names = pools.flatMap((arr: any[]) =>
-    (Array.isArray(arr) ? arr : []).map((p: any) => (typeof p === "string" ? p : p?.name)).filter(Boolean)
+    (Array.isArray(arr) ? arr : [])
+      .map((p: any) => (typeof p === "string" ? p : p?.name))
+      .filter(Boolean)
   );
-  return new Set(names);
+  return new Set(names.map((s: string) => s.toLowerCase()));
 }
 
 function serviceSlugToPath(slug?: string | null): string | null {
   if (!slug) return null;
-  // exceptions d’URL côté front
-  if (slug === "finance") return "/caisse";
+  if (slug === "finance") return "/caisse"; // route générique finance (portail caisse)
   if (slug === "personnel") return "/personnels";
   return `/${slug}`;
 }
@@ -74,71 +77,97 @@ function serviceSlugToPath(slug?: string | null): string | null {
 function safeNext(user: AnyObj, nextUrl: string): string | null {
   if (!nextUrl) return null;
   try {
-    const base =
-      typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
     const url = new URL(nextUrl, base);
 
     // 1) Interne uniquement
     if (url.origin !== base) return null;
 
     // 2) /portail réservé aux admin/dg
-    const roles = getRoleNames(user).map((r) => String(r).toLowerCase());
+    const roles = getRoleNames(user);
     const isAdmin = roles.includes("admin") || roles.includes("dg");
     if (!isAdmin && url.pathname === "/portail") return null;
 
-    // OK
     return url.pathname + url.search + url.hash;
   } catch {
     return null;
   }
 }
 
+/**
+ * Règles de redirection après login :
+ * - caissier_service      → /caisse/ma uniquement
+ * - caissier_general      → /caisse/ma
+ * - admin_caisse          → /caisse/ma
+ * - user avec caisse.access mais SANS rôle de caisse → retour login ?error=nocaisse
+ * - admin/dg              → /portail
+ * - autres → selon service / rôle
+ */
 function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string): string {
-  // Tente d'abord un next sécurisé
+  const roles = getRoleNames(user);
+  const perms = getPermNames(user);
+
+  const isAdmin = roles.includes("admin") || roles.includes("dg");
+
+  const hasCaisseServiceRole = roles.includes("caissier_service");
+  const hasCaisseGeneralRole = roles.includes("caissier_general") || roles.includes("admin_caisse");
+
+  // --- Caisse : on force la main AVANT de lire ?next= ---
+
+  // 1) Caissier de service → va UNIQUEMENT sur /caisse/ma
+  if (hasCaisseServiceRole) {
+    return "/caisse/ma";
+  }
+
+  // 2) Caissier général ou admin caisse → /caisse/ma (il aura le bouton Rapports dans cette page)
+  if (hasCaisseGeneralRole) {
+    return "/caisse/ma";
+  }
+
+  // 3) Utilisateur qui a la permission caisse.access mais PAS de rôle caisse défini
+  //    Typiquement : "caissier" non encore affecté via l'écran d'affectation.
+  if (perms.has("caisse.access")) {
+    // On le renvoie sur login avec un message explicite.
+    return "/login?error=nocaisse";
+  }
+
+  // --- Pour les autres profils, on peut respecter ?next= si c'est safe ---
   const nextSafe = safeNext(user, nextUrl);
   if (nextSafe) return nextSafe;
 
-  const roles = getRoleNames(user).map((r) => String(r).toLowerCase());
-  const isAdmin = roles.includes("admin") || roles.includes("dg");
-  if (isAdmin) return "/portail";
+  // Admin global
+  if (isAdmin) {
+    return "/portail";
+  }
 
-  // 2) service directement depuis la relation personnelle -> service
+  // Auditeur / contrôle de caisse (sans rôle caisse_* mais avec droit d'audit)
+  if (perms.has("caisse.audit.view")) {
+    return "/caisse/admin/audit";
+  }
+
+  // Ensuite autres services (fallbacks inchangés)
   let slug =
     user?.personnel?.service?.slug ||
     SERVICE_NAME_TO_SLUG[user?.personnel?.service?.name as string];
 
-  // 3) si l’URL a demandé un service (ex: ?service=laboratoire) et qu’on n’a rien trouvé
   if (!slug && requestedService && typeof requestedService === "string") {
     slug = requestedService;
   }
-
-  // 4) sinon, deviner via le rôle (ex: caissier → finance)
   if (!slug) {
-    for (const r of roles) {
-      if (ROLE_TO_SLUG[r]) {
-        slug = ROLE_TO_SLUG[r];
-        break;
-      }
-    }
+    const roleToSlug = roles.find((r) => ROLE_TO_SLUG[r]);
+    if (roleToSlug) slug = ROLE_TO_SLUG[roleToSlug];
   }
-
-  // 5) sinon, deviner via permissions
   if (!slug) {
-    const perms = getPermNames(user);
     if (perms.has("labo.view") || perms.has("labo.request.create")) slug = "laboratoire";
     else if (perms.has("pharma.stock.view") || perms.has("pharma.sale.create")) slug = "pharmacie";
-    else if (perms.has("finance.invoice.view") || perms.has("finance.payment.create")) slug = "finance";
     else if (perms.has("pansement.view")) slug = "pansement";
-    else if (perms.has("patients.read") || perms.has("visites.read")) slug = "accueil";
+    else if (perms.has("patients.read") || perms.has("visites.read")) slug = "reception";
   }
 
-  // 6) non-admin : si un service a été trouvé → on y va ; sinon retour login avec message.
   const path = serviceSlugToPath(slug);
-  if (path) return path;
-
-  // ⚠️ non-admin sans service → retour login (PAS /portail)
-  return "/login?error=noservice";
+  return path || "/login?error=noservice";
 }
+
 
 /* ---------------- Helpers UI/phone ---------------- */
 
@@ -156,12 +185,7 @@ function getParam(sp: any | null, key: string) {
   return "";
 }
 
-/** Nettoie pour comparaison (supprime espaces, points, tirets) */
-function stripPhone(v: string) {
-  return v.replace(/[\s.\-]/g, "");
-}
-
-/** Formatte visuel simple +242 XXX XXX XXX (sans impacter la valeur normalisée) */
+function stripPhone(v: string) { return v.replace(/[\s.\-]/g, ""); }
 function prettifyPhone(v: string) {
   const raw = stripPhone(v).replace(/^\+242/, "");
   const groups = raw.match(/^(\d{0,3})(\d{0,3})(\d{0,3})$/);
@@ -169,8 +193,6 @@ function prettifyPhone(v: string) {
   const parts = [groups[1], groups[2], groups[3]].filter(Boolean);
   return "+242 " + parts.join(" ");
 }
-
-/** Normalise en E.164 du Congo (+242) si possible */
 function normalizeToCongo(v: string) {
   const s = stripPhone(v);
   if (s.startsWith("+242")) {
@@ -186,7 +208,6 @@ function normalizeToCongo(v: string) {
 /* ---------------- Page ---------------- */
 
 export default function LoginPage() {
-  const router = useRouter();
   const sp = useSearchParams();
 
   const [mode, setMode] = useState<"email" | "phone">("email");
@@ -208,16 +229,21 @@ export default function LoginPage() {
   const nextUrl = useMemo(() => getParam(sp as any, "next") || "", [sp]);
   const serviceLabel = requestedService || "(sélection automatique)";
 
-  // Afficher un message lorsqu'on revient ici sans service associé
   useEffect(() => {
     const err = getParam(sp as any, "error");
     if (err === "noservice") {
-      setError("Votre compte n'est associé à aucun service. Veuillez contacter l'administrateur.");
+      setError(
+        "Votre compte n'est associé à aucun service. Veuillez contacter l'administrateur."
+      );
+    }
+    if (err === "nocaisse") {
+      setError(
+        "Vous n'êtes pas encore affecté à un rôle de caisse (caissier_service ou caissier_general). Veuillez contacter l'administrateur."
+      );
     }
   }, [sp]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // CapsLock
     if ((e as any).getModifierState && (e as any).getModifierState("CapsLock") !== undefined) {
       setCaps((e as any).getModifierState("CapsLock"));
     }
@@ -247,12 +273,12 @@ export default function LoginPage() {
     if (display.trim()) validatePhoneForUI(display);
   }
 
-    const canSubmit =
-      mode === "email"
-        ? !!email && !!password
-        : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
+  const canSubmit =
+    mode === "email"
+      ? !!email && !!password
+      : !!normalizeToCongo(phoneRaw) && !!password && !phoneError;
 
-    async function handleLogin() {
+  async function handleLogin() {
     setError(null);
     setLoading(true);
 
@@ -270,10 +296,9 @@ export default function LoginPage() {
         data = await login({ mode: "phone", phone: norm, password });
       }
 
-      // ✅ on persiste la session proprement
       setAuthSession(data.token, data.user);
 
-      // ta logique existante de redirection (admin → /portail, sinon → service)
+      // Redirection avec priorité aux règles de caisse (ma / rapport)
       const target = computeRedirect(data.user, requestedService, nextUrl);
       setLoading(false);
       window.location.replace(target);
@@ -285,7 +310,6 @@ export default function LoginPage() {
     }
   }
 
-
   function onSwitchMode(next: "email" | "phone") {
     setMode(next);
     if (next === "phone" && !phoneRaw) setPhoneRaw("+242 ");
@@ -296,7 +320,7 @@ export default function LoginPage() {
       <TopIdentityBar />
 
       <main className="relative mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 py-14 md:grid-cols-2 md:items-center">
-        {/* Colonne gauche : logo + message */}
+        {/* Colonne gauche */}
         <div className="flex flex-col items-start">
           <div className="flex items-center gap-3">
             <div className="relative h-24 w-24 overflow-hidden rounded-2xl bg-white ring-2 ring-congo-green shadow-sm">
@@ -329,21 +353,31 @@ export default function LoginPage() {
           </div>
 
           <p className="mt-4 max-w-md text-[17px] text-ink-700">
-            Connectez-vous au <b>portail hospitalier officiel de l’Hôpital de Référence Raymond Pouaty | Ex-Hôpital des Lépreux. </b>.
+            Connectez-vous au{" "}
+            <b>
+              portail hospitalier officiel de l’Hôpital de Référence Raymond Pouaty |
+              Ex-Hôpital des Lépreux.
+            </b>
             <br className="hidden sm:block" />
             <span className="text-ink-600 text-[15px]">
               Service demandé :
               <b className="ml-1 inline-flex items-center gap-2 rounded-full border border-congo-green/25 bg-congo-greenL px-2.5 py-0.5 text-congo-green">
                 <span className="inline-block h-2 w-2 rounded-full bg-congo-green" />
-                {requestedService || "(sélection automatique)"}
+                {serviceLabel}
               </b>
             </span>
           </p>
 
           <ul className="mt-6 grid grid-cols-1 gap-2 text-sm text-ink-700">
-            <li className="rounded-xl border border-congo-green/30 bg-congo-greenL px-3 py-2">🔐 Accès par rôle — admin & personnel</li>
-            <li className="rounded-xl border border-congo-yellow/40 bg-[color:var(--color-congo-yellow)]/15 px-3 py-2">🧭 Redirection automatique vers le bon service</li>
-            <li className="rounded-xl border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 px-3 py-2">⏳ Session limitée à l’onglet (aucune donnée persistée)</li>
+            <li className="rounded-xl border border-congo-green/30 bg-congo-greenL px-3 py-2">
+              🔐 Accès par rôle — admin & personnel
+            </li>
+            <li className="rounded-xl border border-congo-yellow/40 bg-[color:var(--color-congo-yellow)]/15 px-3 py-2">
+              🧭 Redirection automatique vers le bon service
+            </li>
+            <li className="rounded-xl border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 px-3 py-2">
+              ⏳ Session limitée à l’onglet (aucune donnée persistée)
+            </li>
           </ul>
         </div>
 
@@ -351,7 +385,10 @@ export default function LoginPage() {
         <div className="mx-auto w-full max-w-sm">
           <form
             autoComplete="off"
-            onSubmit={(e) => { e.preventDefault(); handleLogin(); }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleLogin();
+            }}
             className="rounded-2xl bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)] ring-1 ring-black/5"
             aria-describedby={error ? "login-error" : undefined}
           >
@@ -364,7 +401,11 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div id="login-error" role="alert" className="mb-3 rounded-lg border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 p-2.5 text-sm text-congo-red">
+              <div
+                id="login-error"
+                role="alert"
+                className="mb-3 rounded-lg border border-congo-red/30 bg-[color:var(--color-congo-red)]/10 p-2.5 text-sm text-congo-red"
+              >
                 {error}
               </div>
             )}
@@ -375,7 +416,9 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => onSwitchMode("email")}
                 className={`rounded-md px-3 py-2 font-medium transition ${
-                  mode === "email" ? "bg-white shadow ring-1 ring-ink-200 text-congo-green" : "text-ink-600 hover:bg-white/70"
+                  mode === "email"
+                    ? "bg-white shadow ring-1 ring-ink-200 text-congo-green"
+                    : "text-ink-600 hover:bg-white/70"
                 }`}
                 aria-pressed={mode === "email"}
               >
@@ -385,7 +428,9 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => onSwitchMode("phone")}
                 className={`rounded-md px-3 py-2 font-medium transition ${
-                  mode === "phone" ? "bg-white shadow ring-1 ring-ink-200 text-congo-green" : "text-ink-600 hover:bg-white/70"
+                  mode === "phone"
+                    ? "bg-white shadow ring-1 ring-ink-200 text-congo-green"
+                    : "text-ink-600 hover:bg-white/70"
                 }`}
                 aria-pressed={mode === "phone"}
               >
@@ -396,7 +441,12 @@ export default function LoginPage() {
             {/* Identifiant */}
             {mode === "email" ? (
               <>
-                <label htmlFor="email" className="mb-1 block text-xs font-medium text-ink-600">Adresse e-mail</label>
+                <label
+                  htmlFor="email"
+                  className="mb-1 block text-xs font-medium text-ink-600"
+                >
+                  Adresse e-mail
+                </label>
                 <div className="relative mb-3">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-congo-green/80" />
                   <input
@@ -416,7 +466,12 @@ export default function LoginPage() {
               </>
             ) : (
               <>
-                <label htmlFor="phone" className="mb-1 block text-xs font-medium text-ink-600">Numéro de téléphone (Congo)</label>
+                <label
+                  htmlFor="phone"
+                  className="mb-1 block text-xs font-medium text-ink-600"
+                >
+                  Numéro de téléphone (Congo)
+                </label>
                 <div className="relative mb-1">
                   <Phone className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-congo-green/80" />
                   <input
@@ -434,14 +489,27 @@ export default function LoginPage() {
                     aria-required={mode === "phone"}
                   />
                 </div>
-                {phoneError && <div className="mb-2 text-xs text-congo-red">{phoneError}</div>}
+                {phoneError && (
+                  <div className="mb-2 text-xs text-congo-red">{phoneError}</div>
+                )}
               </>
             )}
 
             {/* Mot de passe */}
             <div className="flex items-center justify-between">
-              <label htmlFor="password" className="mb-1 block text-xs font-medium text-ink-600">Mot de passe</label>
-              <span role="status" aria-live="polite" className={`text-xs ${caps ? "text-congo-red" : "text-transparent"} transition`}>
+              <label
+                htmlFor="password"
+                className="mb-1 block text-xs font-medium text-ink-600"
+              >
+                Mot de passe
+              </label>
+              <span
+                role="status"
+                aria-live="polite"
+                className={`text-xs ${
+                  caps ? "text-congo-red" : "text-transparent"
+                } transition`}
+              >
                 {caps ? "CapsLock activé" : "—"}
               </span>
             </div>
@@ -465,10 +533,16 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setShowPwd((v) => !v)}
-                aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                aria-label={
+                  showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"
+                }
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-500 hover:bg-ink-100"
               >
-                {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPwd ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </button>
             </div>
 
@@ -477,7 +551,11 @@ export default function LoginPage() {
               type="submit"
               disabled={loading || !canSubmit}
               className={`mb-3 w-full rounded-lg px-4 py-3 text-[15px] font-semibold text-white transition
-              ${loading || !canSubmit ? "bg-congo-green/70 cursor-not-allowed" : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"}`}
+              ${
+                loading || !canSubmit
+                  ? "bg-congo-green/70 cursor-not-allowed"
+                  : "bg-congo-green hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-congo-green/30"
+              }`}
             >
               {loading ? (
                 <span className="inline-flex items-center gap-2">
@@ -489,7 +567,8 @@ export default function LoginPage() {
             </button>
 
             <p className="mt-3 text-center text-xs text-ink-500">
-              Aucune donnée n’est mémorisée. La session se termine à la fermeture de l’onglet.
+              Aucune donnée n’est mémorisée. La session se termine à la fermeture
+              de l’onglet.
             </p>
           </form>
 

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ACCESS_RULES, PUBLIC_ROUTES } from "./route-access";
 
 /* ------------------------------------------------------------------ */
-/* Session helpers (utilisés aussi par lib/api.ts et le header)       */
+/* Session helpers                                                     */
 /* ------------------------------------------------------------------ */
 
 export function setAuthSession(token: string, user: any) {
@@ -32,7 +32,6 @@ function deleteCookie(name: string) {
   } catch {}
 }
 
-/** Nettoyage complet du navigateur */
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
   try {
@@ -54,7 +53,6 @@ export function clearAuthSession() {
   deleteCookie("is_admin");
 }
 
-/** Déconnexion unifiée + redirection propre */
 export function logoutAndRedirect(redirectTo = "/login") {
   clearAuthSession();
   try { window.history.replaceState(null, "", redirectTo); } catch {}
@@ -96,6 +94,15 @@ function getAbilities(u: any, isSuper: boolean): string[] {
   return Array.from(base);
 }
 
+/** Renvoie le "rôle caisse" prioritaire s'il existe sur l'utilisateur */
+export function pickCaisseRole(roles: string[]): "admin_caisse" | "caissier_general" | "caissier_service" | null {
+  const set = new Set(roles.map((r) => r.toLowerCase()));
+  if (set.has("admin_caisse")) return "admin_caisse";
+  if (set.has("caissier_general")) return "caissier_general";
+  if (set.has("caissier_service")) return "caissier_service";
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Hook d’autorisation                                                 */
 /* ------------------------------------------------------------------ */
@@ -107,6 +114,7 @@ export function useAuthz() {
     const roles = getRoles(user);
     const isAdmin = roles.includes("admin") || roles.includes("dg");
     const abilities = getAbilities(user, isAdmin);
+    const caisseRole = pickCaisseRole(roles);
     return {
       ready: false,
       user,
@@ -114,6 +122,7 @@ export function useAuthz() {
       roles,
       isAdmin,
       abilities,
+      caisseRole, // 🟢 exposé au front
       isAuthenticated: !!token,
     };
   });
@@ -125,6 +134,7 @@ export function useAuthz() {
       const roles = getRoles(user);
       const isAdmin = roles.includes("admin") || roles.includes("dg");
       const abilities = getAbilities(user, isAdmin);
+      const caisseRole = pickCaisseRole(roles);
       setState({
         ready: true,
         user,
@@ -132,6 +142,7 @@ export function useAuthz() {
         roles,
         isAdmin,
         abilities,
+        caisseRole,
         isAuthenticated: !!token,
       });
     };
@@ -155,7 +166,7 @@ export function useAuthz() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Guards réutilisables                                                */
+/* Guards                                                              */
 /* ------------------------------------------------------------------ */
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -256,7 +267,7 @@ export function RouteGuard() {
       return;
     }
 
-    // 3) /portail strict: admin/dg uniquement
+    // 3) /portail strict: admin/dg
     if (pathname.startsWith("/portail") && !isAdmin) {
       router.replace("/login?error=forbidden");
       return;

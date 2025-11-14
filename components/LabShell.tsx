@@ -1,3 +1,4 @@
+// Updated LabShell with background image
 "use client";
 
 import React, { createContext, useContext, useMemo, useEffect, useState } from "react";
@@ -15,7 +16,7 @@ type Caps = {
   examens: { view: boolean; requestCreate: boolean; resultWrite: boolean };
   patients: { read: boolean };
   visites: { read: boolean };
-  stats:   { view: boolean };
+  stats: { view: boolean };
   medecins: { read: boolean };
 };
 
@@ -25,7 +26,7 @@ const LabCtx = createContext<{ caps: Caps }>({
     examens: { view: false, requestCreate: false, resultWrite: false },
     patients: { read: false },
     visites: { read: false },
-    stats:   { view: false },
+    stats: { view: false },
     medecins: { read: false },
   },
 });
@@ -56,7 +57,7 @@ function buildCaps(roles: string[]): Caps {
       examens: { view: true, requestCreate: true, resultWrite: true },
       patients: { read: true },
       visites: { read: true },
-      stats:   { view: true },
+      stats: { view: true },
       medecins: { read: true },
     };
   }
@@ -68,7 +69,7 @@ function buildCaps(roles: string[]): Caps {
       examens: { view: true, requestCreate: true, resultWrite: true },
       patients: { read: true },
       visites: { read: true },
-      stats:   { view: true },
+      stats: { view: true },
       medecins: { read: true },
     };
   }
@@ -78,7 +79,7 @@ function buildCaps(roles: string[]): Caps {
     examens: { view: false, requestCreate: false, resultWrite: false },
     patients: { read: false },
     visites: { read: false },
-    stats:   { view: false },
+    stats: { view: false },
     medecins: { read: false },
   };
 }
@@ -119,71 +120,66 @@ export default function LabShell({ children }: { children: React.ReactNode }) {
 
   return (
     <LabCtx.Provider value={{ caps }}>
-      <div className="min-h-screen bg-gradient-to-b from-ink-100 to-white text-ink-900">
-        <TopIdentityBar />
-        <SiteHeader
-          title="Laboratoire"
-          subtitle="Examens, comptes-rendus et statistiques"
-          logoSrc="/logo-hospital.png"
-        />
+      <div className="relative min-h-screen text-ink-900">
+        <div className="absolute inset-0 -z-10">
+          <img
+            src="/lab.png"
+            alt=""
+            className="w-full h-full object-cover"
+          />
+        </div>
 
-        <main className="mx-auto max-w-7xl px-4 py-8">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Sidebar */}
-            <aside className="lg:col-span-3">
-              <div className="rounded-2xl border border-ink-100 bg-white shadow-sm overflow-hidden">
-                {/* bandeau */}
-                <div className="h-1 bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
-                <div className="p-3">
-                  <div className="text-xs font-semibold text-ink-700 mb-2">
-                    Applications Laboratoire
+        <div className="absolute inset-0 bg-white/5 -z-0" />
+
+        <div className="relative z-10 flex flex-col min-h-screen">
+          <TopIdentityBar />
+          <SiteHeader
+            title="Laboratoire"
+            subtitle="Examens, comptes-rendus et statistiques"
+            logoSrc="/logo-hospital.png"
+          />
+
+          <main className="flex-1 mx-auto max-w-7xl px-4 py-8 space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <aside className="lg:col-span-3">
+                <div className="rounded-2xl border border-ink-100 bg-white/80 shadow-sm overflow-hidden backdrop-blur-md">
+                  <div className="h-1 bg-[linear-gradient(90deg,var(--color-congo-green),var(--color-congo-yellow),var(--color-congo-red))]" />
+                  <div className="p-3">
+                    <div className="text-xs font-semibold text-ink-700 mb-2">Applications Laboratoire</div>
+                    <nav className="space-y-1" aria-label="Apps laboratoire">
+                      {caps.examens.view && (
+                        <SideItem
+                          href="/laboratoire/examens"
+                          icon={<Microscope className="h-4 w-4" />}
+                          label="Examens"
+                          active={active === "examens"}
+                        />
+                      )}
+                      {caps.stats.view && (
+                        <SideItem
+                          href="/laboratoire/stats"
+                          icon={<BarChart3 className="h-4 w-4" />}
+                          label="Statistiques"
+                          active={active === "stats"}
+                        />
+                      )}
+                    </nav>
                   </div>
-                  <nav className="space-y-1" aria-label="Apps laboratoire">
-                    {caps.examens.view && (
-                      <SideItem
-                        href="/laboratoire/examens"
-                        icon={<Microscope className="h-4 w-4" />}
-                        label="Examens"
-                        active={active === "examens"}
-                      />
-                    )}
-                    {caps.stats.view && (
-                      <SideItem
-                        href="/laboratoire/stats"
-                        icon={<BarChart3 className="h-4 w-4" />}
-                        label="Statistiques"
-                        active={active === "stats"}
-                      />
-                    )}
-                  </nav>
                 </div>
-              </div>
-            </aside>
+              </aside>
 
-            {/* Contenu */}
-            <section className="lg:col-span-9 space-y-6">
-              {children}
-            </section>
-          </div>
-        </main>
+              <section className="lg:col-span-9 space-y-6">{children}</section>
+            </div>
+          </main>
 
-        <SiteFooter />
+          <SiteFooter />
+        </div>
       </div>
     </LabCtx.Provider>
   );
 }
 
-function SideItem({
-  href,
-  icon,
-  label,
-  active,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}) {
+function SideItem({ href, icon, label, active }:{ href: string; icon: React.ReactNode; label: string; active?: boolean; }) {
   return (
     <Link
       href={href}

@@ -1457,16 +1457,24 @@ export async function deleteFactureLigne(factureId: string | number, ligneId: st
 // Tu as déjà payFacture(factureId, { montant, mode, reference?, devise? })
 export const encaisserFacture = payFacture; // ✅ alias attendu par les pages
 
-// Sessions de caisse (endpoints probables; ajuste si besoin côté back)
-export async function openCashSession(payload: { opened_at?: string; initial_amount?: number; workstation_id?: string | number; note?: string }) {
-  return apiFetch(`/cash-sessions/open`, { method: "POST", body: payload });
+export async function openCashSession(payload: {
+  opened_at?: string;
+  initial_amount?: number;
+  workstation_id?: string | number;
+  note?: string;
+}) {
+  return apiFetch(`/caisse/sessions/open`, { method: "POST", body: payload });
 }
+
 export async function currentCashSession() {
-  return apiFetch(`/cash-sessions/current`, { method: "GET" });
+  // tu peux choisir entre /me ou /current, les deux existent
+  return apiFetch(`/caisse/sessions/current`, { method: "GET" });
 }
+
 export async function closeCashSession(payload?: { closed_at?: string; note?: string }) {
-  return apiFetch(`/cash-sessions/close`, { method: "POST", body: payload ?? {} });
+  return apiFetch(`/caisse/sessions/close`, { method: "POST", body: payload ?? {} });
 }
+
 
 // Poste de travail (optionnel)
 export async function getWorkstation() {
@@ -1840,3 +1848,28 @@ export async function getMedecine(id: string) { return apiFetch(`/medecines/${id
 export async function updateMedecine(id: string, payload: any) { return apiFetch(`/medecines/${id}`, { method: "PUT", body: JSON.stringify(payload) }); }
 export async function deleteMedecine(id: string) { return apiFetch(`/medecines/${id}`, { method: "DELETE" }); }
 
+
+export async function assignUserRoles(userId: number, roles: string[]) {
+  const body = {
+    roles,
+    role_names: roles,
+    role_slugs: roles,
+  };
+
+  return apiFetch(`/admin/users/${userId}/roles`, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function syncUserServices(userId: number, serviceIds: number[]) {
+  const body = {
+    services: serviceIds,
+    service_ids: serviceIds,
+  };
+
+  return apiFetch(`/admin/users/${userId}/services`, {
+    method: "POST",
+    body,
+  });
+}

@@ -14,15 +14,15 @@ export type AccessRule = {
 export const PUBLIC_ROUTES: RegExp[] = [
   /^\/$/,
   /^\/login(?:\/.*)?$/,
-  /^\/403$/,                    // page d'erreur publique
+  /^\/403$/,
   /^\/_next\//,
   /^\/favicon\.(?:ico|svg|png)$/,
   /^\/images?\//,
 ];
 
-// RBAC matrix : ajoute/édite ici selon tes modules
+// RBAC matrix
 export const ACCESS_RULES: AccessRule[] = [
-  // Portail → réservé admin/dg
+  // Portail → admin/dg
   { pattern: /^\/portail(?:\/.*)?$/, allowRoles: ["admin", "dg"] },
 
   // Réception → admin/dg/reception
@@ -42,12 +42,20 @@ export const ACCESS_RULES: AccessRule[] = [
   // Laboratoire
   { pattern: /^\/laboratoire\/?$/,                   any: ["labo.view", "labo.request.create", "labo.result.write"] },
 
-  // === Caisse / Finance (aligné avec tes middlewares Laravel) ===
-  // Module caisse (page principale)
-  { pattern: /^\/caisse(?:\/.*)?$/,                  any: ["*", "caisse.access"] },
+  // ================== Caisse (ALIGNÉ AVEC TON SEEDER) ==================
+  // POS /caisse → permission générique du module
+ { pattern: /^\/caisse\/ma\/?$/, any: ["caisse.access"] },
 
-  // Factures (consultation / édition ouvertes aux caissiers)
-  { pattern: /^\/factures(?:\/.*)?$/,                any: ["*", "caisse.access", "caisse.facture.view"] },
+  // Rapport → permission dédiée report
+  { pattern: /^\/caisse\/rapport(?:\/.*)?$/,         any: ["caisse.report.view"] },
 
-  // (Ajoute d’autres services/pages si besoin…)
+  // Audit admin → permission dédiée audit
+  { pattern: /^\/caisse\/admin\/audit(?:\/.*)?$/,    any: ["caisse.audit.view"] },
+
+  // Factures (si tu les exposes par ici)
+  { pattern: /^\/factures(?:\/.*)?$/,                any: ["caisse.access", "caisse.facture.view"] },
+
+  // Admin Caisse → écran d’affectation (autorisé à admin, admin_caisse ou roles.assign)
+{ pattern: /^\/admin\/caisse\/affectations(?:\/.*)?$/, allowRoles: ["admin", "admin_caisse"], any: ["roles.assign"] },
+
 ];

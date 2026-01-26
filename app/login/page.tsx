@@ -83,9 +83,16 @@ function safeNext(user: AnyObj, nextUrl: string): string | null {
     // 1) Interne uniquement
     if (url.origin !== base) return null;
 
-    // 2) /portail réservé aux admin/dg
+    // 2) /portail réservé aux admin/dg (détection + robuste)
     const roles = getRoleNames(user);
-    const isAdmin = roles.includes("admin") || roles.includes("dg");
+    const perms = getPermNames(user);
+
+    const isAdmin =
+      roles.some((r) => ["admin", "dg", "super_admin", "superadmin"].includes(r)) ||
+      perms.has("admin.access") ||
+      perms.has("portail.access") ||
+      user?.is_admin === true;
+
     if (!isAdmin && url.pathname === "/portail") return null;
 
     return url.pathname + url.search + url.hash;
@@ -96,56 +103,52 @@ function safeNext(user: AnyObj, nextUrl: string): string | null {
 
 /**
  * Règles de redirection après login :
+ * - admin/dg              → /portail (prioritaire)
  * - caissier_service      → /caisse/ma uniquement
  * - caissier_general      → /caisse/ma
  * - admin_caisse          → /caisse/ma
  * - user avec caisse.access mais SANS rôle de caisse → retour login ?error=nocaisse
- * - admin/dg              → /portail
  * - autres → selon service / rôle
  */
 function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string): string {
   const roles = getRoleNames(user);
   const perms = getPermNames(user);
 
-  const isAdmin = roles.includes("admin") || roles.includes("dg");
+  // Admin = ne jamais bloquer (détection robuste)
+  const isAdmin =
+    roles.some((r) => ["admin", "dg", "super_admin", "superadmin"].includes(r)) ||
+    perms.has("admin.access") ||
+    perms.has("portail.access") ||
+    user?.is_admin === true;
+
+  // ✅ PRIORITÉ ABSOLUE: Admin/DG -> Portail
+  if (isAdmin) {
+    const nextSafe = safeNext(user, nextUrl);
+    return nextSafe || "/portail";
+  }
 
   const hasCaisseServiceRole = roles.includes("caissier_service");
   const hasCaisseGeneralRole = roles.includes("caissier_general") || roles.includes("admin_caisse");
 
-  // --- Caisse : on force la main AVANT de lire ?next= ---
+  // 1) Caissier de service → /caisse/ma
+  if (hasCaisseServiceRole) return "/caisse/ma";
 
-  // 1) Caissier de service → va UNIQUEMENT sur /caisse/ma
-  if (hasCaisseServiceRole) {
-    return "/caisse/ma";
-  }
+  // 2) Caissier général / admin_caisse → /caisse/ma
+  if (hasCaisseGeneralRole) return "/caisse/ma";
 
-  // 2) Caissier général ou admin caisse → /caisse/ma (il aura le bouton Rapports dans cette page)
-  if (hasCaisseGeneralRole) {
-    return "/caisse/ma";
-  }
-
-  // 3) Utilisateur qui a la permission caisse.access mais PAS de rôle caisse défini
-  //    Typiquement : "caissier" non encore affecté via l'écran d'affectation.
+  // 3) Non-admin : s'il a caisse.access mais pas de rôle caisse, on bloque
   if (perms.has("caisse.access")) {
-    // On le renvoie sur login avec un message explicite.
     return "/login?error=nocaisse";
   }
 
-  // --- Pour les autres profils, on peut respecter ?next= si c'est safe ---
+  // 4) ?next= si safe
   const nextSafe = safeNext(user, nextUrl);
   if (nextSafe) return nextSafe;
 
-  // Admin global
-  if (isAdmin) {
-    return "/portail";
-  }
+  // 5) Audit caisse
+  if (perms.has("caisse.audit.view")) return "/caisse/admin/audit";
 
-  // Auditeur / contrôle de caisse (sans rôle caisse_* mais avec droit d'audit)
-  if (perms.has("caisse.audit.view")) {
-    return "/caisse/admin/audit";
-  }
-
-  // Ensuite autres services (fallbacks inchangés)
+  // 6) Fallback service / rôle
   let slug =
     user?.personnel?.service?.slug ||
     SERVICE_NAME_TO_SLUG[user?.personnel?.service?.name as string];
@@ -153,10 +156,12 @@ function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string
   if (!slug && requestedService && typeof requestedService === "string") {
     slug = requestedService;
   }
+
   if (!slug) {
     const roleToSlug = roles.find((r) => ROLE_TO_SLUG[r]);
     if (roleToSlug) slug = ROLE_TO_SLUG[roleToSlug];
   }
+
   if (!slug) {
     if (perms.has("labo.view") || perms.has("labo.request.create")) slug = "laboratoire";
     else if (perms.has("pharma.stock.view") || perms.has("pharma.sale.create")) slug = "pharmacie";
@@ -164,10 +169,8 @@ function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string
     else if (perms.has("patients.read") || perms.has("visites.read")) slug = "reception";
   }
 
-  const path = serviceSlugToPath(slug);
-  return path || "/login?error=noservice";
+  return serviceSlugToPath(slug) || "/";
 }
-
 
 /* ---------------- Helpers UI/phone ---------------- */
 

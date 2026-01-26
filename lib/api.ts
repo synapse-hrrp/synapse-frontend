@@ -2,7 +2,7 @@
 import { setAuthSession, clearAuthSession } from "@/lib/authz"; // ou "./authz" si pas d'alias
 
 /* ================= Base & helpers ================= */
-const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE || "http://192.168.1.196:8000/api/v1";
+const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE || "http://192.168.1.178:8000/api/v1";
 const API_BASE = API_BASE_RAW.replace(/\/+$/, ""); // retire les / finaux
 
 function join(base: string, path: string) {
@@ -1872,4 +1872,19 @@ export async function syncUserServices(userId: number, serviceIds: number[]) {
     method: "POST",
     body,
   });
+}
+
+
+// lib/api.ts – section Services
+
+export async function deleteService(id: number | string) {
+  const _id = String(id);
+
+  try {
+    // route admin en priorité
+    return await apiFetch(`/admin/services/${_id}`, { method: "DELETE" });
+  } catch {
+    // fallback si tu as aussi /services/{id}
+    return await apiFetch(`/services/${_id}`, { method: "DELETE" });
+  }
 }

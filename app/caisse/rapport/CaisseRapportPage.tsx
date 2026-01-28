@@ -1,4 +1,4 @@
-//app/caisse/page.tsx
+//app/caisse/CaisseRapportPage.tsx
 "use client";
 
 import { useState } from "react";
@@ -22,15 +22,11 @@ export default function CaisseRapportPage() {
         />
 
         <main className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-          {/* Tabs */}
           <div className="flex gap-2 border-b">
             <TabButton active={tab === "stats"} onClick={() => setTab("stats")}>
               📊 Statistiques
             </TabButton>
-            <TabButton
-              active={tab === "payments"}
-              onClick={() => setTab("payments")}
-            >
+            <TabButton active={tab === "payments"} onClick={() => setTab("payments")}>
               📋 Transactions
             </TabButton>
           </div>

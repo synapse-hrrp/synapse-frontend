@@ -1,9 +1,10 @@
 // lib/api.ts
-import { setAuthSession, clearAuthSession } from "@/lib/authz"; // ou "./authz" si pas d'alias
+import { setAuthSession, clearAuthSession } from "@/lib/authz";
 
 /* ================= Base & helpers ================= */
-const API_BASE_RAW = process.env.NEXT_PUBLIC_API_BASE || "http://192.168.1.178:8000/api/v1";
-const API_BASE = API_BASE_RAW.replace(/\/+$/, ""); // retire les / finaux
+const API_BASE_RAW =
+  process.env.NEXT_PUBLIC_API_BASE || "http://192.168.1.178:8000/api/v1";
+const API_BASE = API_BASE_RAW.replace(/\/+$/, "");
 
 function join(base: string, path: string) {
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -17,34 +18,36 @@ export type LoginPayload =
 
 export function getToken() {
   if (typeof window === "undefined") return null;
-  return sessionStorage.getItem("auth:token");
+
+  // ✅ on supporte les 2, au cas où l’app stockait ailleurs avant
+  return (
+    sessionStorage.getItem("auth:token") ||
+    localStorage.getItem("auth:token") ||
+    localStorage.getItem("token") ||
+    null
+  );
 }
 
 /* =============== Fetch commun (FIX headers) =============== */
-// Protection contre redirection HTML /login + fusion de headers sûre
-// lib/api.ts
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const token =
-    typeof window !== "undefined" ? sessionStorage.getItem("auth:token") : null;
-
+  const token = getToken();
   const isFormData = options.body instanceof FormData;
 
-  // Construit des headers "safe"
+  // Construit des headers safe
   const headers = new Headers({
     Accept: "application/json",
-    // ❗️ NE PAS fixer Content-Type si FormData (fetch ajoute le boundary)
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
   });
 
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  // Fusionne les headers passés par l’appelant (en les laissant override)
+  // Fusion headers externes (override ok)
   if (options.headers) {
     const extra = new Headers(options.headers as HeadersInit);
     extra.forEach((v, k) => headers.set(k, v));
   }
 
-  // Si on nous a passé un objet JS (pas FormData, pas string), on JSON.stringify
+  // ✅ JSON.stringify seulement si body = objet
   let body = options.body as any;
   if (body && !isFormData && typeof body === "object" && !(body instanceof Blob)) {
     body = JSON.stringify(body);
@@ -56,36 +59,42 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     body,
     cache: "no-store",
     redirect: "follow",
-    // Si tu utilises Sanctum + cookies: active aussi credentials
-    // credentials: "include",
   });
 
-  // Si Laravel renvoie une page HTML /login, traite comme 401
   const finalURL = res.url || "";
   const ct = res.headers.get("content-type") || "";
+
   if (res.redirected && finalURL.includes("/login")) {
-    throw new Error("401 Unauthorized - redirected to login");
+    const err: any = new Error("401 Unauthorized - redirected to login");
+    err.status = 401;
+    throw err;
   }
 
   const rawText = await res.text().catch(() => "");
   const tryJson = () => {
-    try { return rawText ? JSON.parse(rawText) : null; } catch { return null; }
+    try {
+      return rawText ? JSON.parse(rawText) : null;
+    } catch {
+      return null;
+    }
   };
 
   if (!res.ok) {
     const data = tryJson();
     const msg =
-      (data && (data.message || data.error)) ||
-      `${res.status} ${res.statusText}`;
+      (data && (data.message || data.error)) || `${res.status} ${res.statusText}`;
     const err: any = new Error(msg);
     err.status = res.status;
     err.payload = data || rawText;
     throw err;
   }
 
-  return ct.includes("application/json") ? (rawText ? JSON.parse(rawText) : null) : rawText;
+  return ct.includes("application/json")
+    ? rawText
+      ? JSON.parse(rawText)
+      : null
+    : rawText;
 }
-
 
 /* ------------ Auth ------------ */
 export async function login(payload: LoginPayload) {
@@ -94,22 +103,22 @@ export async function login(payload: LoginPayload) {
       ? { email: payload.email, password: payload.password }
       : { phone: payload.phone, password: payload.password };
 
+  // ✅ pas besoin JSON.stringify ici, apiFetch le fait
   const data = await apiFetch("/auth/login", {
     method: "POST",
-    body: JSON.stringify(body),
+    body,
   });
 
   const token = data?.token || data?.access_token || data?.data?.token;
-  let user   = data?.user  || data?.data?.user;
+  let user = data?.user || data?.data?.user;
+
   if (!token) throw new Error("Token manquant dans la réponse /auth/login");
 
-  // Option: enrichir l'utilisateur avec /auth/me (roles, permissions, etc.)
+  // Option: enrichir l'utilisateur
   try {
     const meData = await me();
     user = meData?.data ?? meData ?? user;
-  } catch {
-    // si /auth/me n'est pas dispo, on continue avec user tel quel
-  }
+  } catch {}
 
   setAuthSession(token, user || null);
   return { token, user };
@@ -126,6 +135,7 @@ export async function logout() {
 export async function me() {
   return apiFetch("/auth/me", { method: "GET" });
 }
+
 
 /* ------------ Patients ------------ */
 // ⚠️ version avec AbortSignal pour annuler la recherche si besoin

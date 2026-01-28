@@ -83,23 +83,24 @@ function safeNext(user: AnyObj, nextUrl: string): string | null {
     // 1) Interne uniquement
     if (url.origin !== base) return null;
 
-    // 2) /portail réservé aux admin/dg (détection + robuste)
+    // Détection admin (robuste)
     const roles = getRoleNames(user);
     const perms = getPermNames(user);
-
     const isAdmin =
       roles.some((r) => ["admin", "dg", "super_admin", "superadmin"].includes(r)) ||
       perms.has("admin.access") ||
       perms.has("portail.access") ||
       user?.is_admin === true;
 
-    if (!isAdmin && url.pathname === "/portail") return null;
+    // 2) Bloquer /portail pour non-admin (même si next=/portail)
+    if (!isAdmin && url.pathname.startsWith("/portail")) return null;
 
     return url.pathname + url.search + url.hash;
   } catch {
     return null;
   }
 }
+
 
 /**
  * Règles de redirection après login :
@@ -142,8 +143,8 @@ function computeRedirect(user: AnyObj, requestedService: string, nextUrl: string
   }
 
   // 4) ?next= si safe
-  const nextSafe = safeNext(user, nextUrl);
-  if (nextSafe) return nextSafe;
+  //const nextSafe = safeNext(user, nextUrl);
+  //if (nextSafe) return nextSafe;
 
   // 5) Audit caisse
   if (perms.has("caisse.audit.view")) return "/caisse/admin/audit";

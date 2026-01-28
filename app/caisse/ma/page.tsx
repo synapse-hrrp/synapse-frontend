@@ -113,7 +113,7 @@ function MaCaisseInner() {
 
         setServiceOptions(clean);
       } catch {
-        setServiceOptions([]); 
+        setServiceOptions([]);
       }
     })();
   }, []);
@@ -274,17 +274,17 @@ function MaCaisseInner() {
     }
   }
 
-  // factures (dropdown)
+  // factures (dropdown) — ❗️backend filtre déjà par service.
   async function loadFacturesForSelect() {
     try {
       const res: any = await listFacturesPaginated({
         page: 1,
         per_page: 50,
-        status: "issued",
+        // pas de "status": le backend gère déjà la visibilité
       });
 
       const data: any[] = res?.data ?? (Array.isArray(res) ? res : []);
-      let mapped: FactureLite[] = data.map((f: any) => {
+      const mapped: FactureLite[] = data.map((f: any) => {
         const sid = f.service_id ?? f.serviceId ?? f.service?.id ?? null;
         const totalRaw =
           f.total_ttc ?? f.total ?? f.montant_total ?? f.montant ?? 0;
@@ -297,12 +297,11 @@ function MaCaisseInner() {
                 0
               )
             : 0);
+
         const total = Number(totalRaw || 0);
         const paye = Number(payeRaw || 0);
         const reste =
-          Number(
-            f.reste ?? f.montant_du ?? Math.max(total - paye, 0)
-          ) || 0;
+          Number(f.reste ?? f.montant_du ?? Math.max(total - paye, 0)) || 0;
 
         return {
           id: String(f.id),
@@ -316,14 +315,7 @@ function MaCaisseInner() {
         };
       });
 
-      if (isCaisseService && allowedServiceIds.length > 0) {
-        mapped = mapped.filter(
-          (f) =>
-            f.service_id != null &&
-            allowedServiceIds.includes(Number(f.service_id))
-        );
-      }
-
+      // ⛔️ NE PAS refiltrer par service ici : ServiceAccess le fait déjà côté backend
       setFactureOptions(mapped);
     } catch {
       setFactureOptions([]);
@@ -385,7 +377,9 @@ function MaCaisseInner() {
         sid != null &&
         !allowedServiceIds.includes(Number(sid))
       ) {
-        alert("Cette facture appartient à un service qui ne vous est pas autorisé.");
+        alert(
+          "Cette facture appartient à un service qui ne vous est pas autorisé."
+        );
         setFacture(null);
         return;
       }
@@ -911,7 +905,7 @@ function K({ k, v }: { k: string; v: any }) {
 
 function Field({
   label,
-  children, 
+  children,
 }: {
   label: string;
   children: React.ReactNode;
